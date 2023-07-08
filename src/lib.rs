@@ -9,6 +9,7 @@ use tokio::signal;
 
 use clap::Parser;
 use colored::Colorize;
+use windows::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_C_EVENT};
 use windows::Win32::System::Power::{
     SetThreadExecutionState,
     // ES_AWAYMODE_REQUIRED,
@@ -103,21 +104,23 @@ impl WslRunner {
             String::from(self.listen_address).bold()
         );
 
-        let mut command = self.launch_command();
-        let mut command_wait = command.await?;
+        let mut command = self.launch_command()?;
+        // TODO: pipe outputs.
+        let mut stdin = command.stdin.take();
         loop {
             tokio::select! {
                 _ = signal::ctrl_c() => {
+                    //unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0); }
                     break;
                 }
-                val = command_wait.wait() => {
+                val = command.wait() => {
                     match val {
                         Ok(exit_status) => println!("Command exited: {}\r", exit_status.to_string().green()),
                         Err(err) => println!("Command failed with {} error\r",err.to_string().green()),
                     }
                     // TODO: improve error handling here.
-                    command = self.launch_command();
-                    command_wait = command.await?;
+                    command = self.launch_command()?;
+                    stdin = command.stdin.take();
                 }
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
@@ -128,18 +131,22 @@ impl WslRunner {
                 }
             }
         }
-        command_wait.kill().await?;
+        drop(stdin);
+        //command.kill().await?;
+        command.wait().await?;
         Ok(())
     }
 
-    async fn launch_command(&self) -> Result<Child, std::io::Error> {
+    fn launch_command(&self) -> Result<Child, std::io::Error> {
         let cmd_parts = self.launch_command.split(' ').collect::<Vec<_>>();
-        Command::new(cmd_parts[0])
-            .args(&cmd_parts[1..])
+        Command::new("wsl")
+            .arg("bash")
+            .arg("-c")
+            .arg("(cat && kill 0) | /usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config")
             .kill_on_drop(true)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .spawn()
     }
 

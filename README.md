@@ -22,7 +22,7 @@ ssh-keygen -q -N "" -t ed25519 -f ~/.ssh/sshd/ssh_host_ed25519_key
 cp /etc/ssh/sshd_config ~/.ssh/sshd
 ```
 
-Then update paths to `HostKey` and the port (to `2022`) in `~/.ssh/sshd/sshd_config`.
+Then update paths in `HostKey` and the `Port` (to `2022`) in `~/.ssh/sshd/sshd_config`.
 
 ## Optional extras
 
