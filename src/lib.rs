@@ -93,18 +93,22 @@ impl WslRunner {
     }
 
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
-        let inner_runtime = tokio::runtime::Runtime::new().unwrap();
-        let (send, mut recv) = channel::<()>(1);
-        self.listen_port().await?;
+        //let (send, mut recv) = channel::<()>(1);
+        let listen_address = self.listen_address;
+        let target_address = self.target_address;
+        tokio::spawn(WslRunner::listen_port(listen_address, target_address));
         signal::ctrl_c().await?;
-        recv.recv().await;
-        inner_runtime.shutdown_timeout(Duration::from_secs(60));
+        //recv.recv().await;
         Ok(())
     }
 
-    async fn listen_port(&self) -> Result<(), std::io::Error> {
-        let listener = TcpListener::bind(self.listen_address).await?;
-        let target_address = self.target_address;
+    async fn listen_port(
+        listen_address: &'static str,
+        target_address: &'static str,
+    ) -> Result<(), std::io::Error> {
+        println!("Listener opening {listen_address}");
+        let listener = TcpListener::bind(listen_address).await?;
+        println!("Listener opened");
         while let Ok((mut ingress, addr)) = listener.accept().await {
             println!("Incoming connection from ingress {}", addr);
             tokio::spawn(async move {
@@ -124,9 +128,11 @@ impl WslRunner {
         Ok(())
     }
 
-    fn run(&self) -> Result<(), Box<dyn Error>> {
+    fn run(&self) -> Result<(), std::io::Error> {
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(self.wait_termination()).map_err(|e| e.into())
+        rt.block_on(self.wait_termination())?;
+        rt.shutdown_timeout(Duration::from_secs(60));
+        Ok(())
     }
 }
 
@@ -171,5 +177,5 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // After exiting main, StayAwake instance is dropped and the thread execution
     //   state is reset to ES_CONTINUOUS
 
-    WslRunner::new().run()
+    WslRunner::new().run().map_err(|e| e.into())
 }
