@@ -1,9 +1,10 @@
 use std::error::Error;
 use std::net::SocketAddr;
+use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::signal;
 
 use clap::Parser;
@@ -96,17 +97,28 @@ impl WslRunner {
     }
 
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
-        let launch_command = self.launch_command;
-
         let listener = TcpListener::bind(self.listen_address).await?;
         println!(
             "Opened listener on {}",
             String::from(self.listen_address).bold()
         );
 
-        tokio::spawn(WslRunner::launch_command(launch_command));
+        let mut command = self.launch_command();
+        let mut command_wait = command.await?;
         loop {
             tokio::select! {
+                _ = signal::ctrl_c() => {
+                    break;
+                }
+                val = command_wait.wait() => {
+                    match val {
+                        Ok(exit_status) => println!("Command exited: {}", exit_status.to_string().green()),
+                        Err(err) => println!("Command failed with {} error",err.to_string().green()),
+                    }
+                    // TODO: improve error handling here.
+                    command = self.launch_command();
+                    command_wait = command.await?;
+                }
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
                         println!("Received connection from {}", addr.to_string().bold());
@@ -114,20 +126,19 @@ impl WslRunner {
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
                 }
-                _ = signal::ctrl_c() => {
-                    break;
-                }
             }
         }
         Ok(())
     }
 
-    async fn launch_command(cmd: &'static str) {
-        let cmd_parts = cmd.split(' ').collect::<Vec<_>>();
-        let output = Command::new(cmd_parts[0])
+    async fn launch_command(&self) -> Result<Child, std::io::Error> {
+        let cmd_parts = self.launch_command.split(' ').collect::<Vec<_>>();
+        Command::new(cmd_parts[0])
             .args(&cmd_parts[1..])
-            .output()
-            .await;
+            .kill_on_drop(true)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
     }
 
     async fn handle_socket(
@@ -139,14 +150,19 @@ impl WslRunner {
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
                 println!(
-                    "Connection ended gracefully ({} bytes from client, {} bytes from server)",
+                    "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)",
+                    addr.to_string(),
                     to_egress.to_string().purple(),
                     to_ingress.to_string().blue(),
                 );
                 Ok(())
             }
             Err(err) => {
-                println!("Error while proxying: {}", err.to_string().red());
+                println!(
+                    "Error while proxying (addr {}): {}",
+                    addr.to_string(),
+                    err.to_string().red()
+                );
                 Err(err)
             }
         }
