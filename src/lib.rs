@@ -1,6 +1,9 @@
 use std::error::Error;
+use std::time::Duration;
 
-use tokio::{runtime::Runtime, signal};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::signal;
+use tokio::sync::mpsc::{channel, Receiver};
 
 use clap::Parser;
 use colored::Colorize;
@@ -76,11 +79,45 @@ fn execution_state_as_string(es: EXECUTION_STATE) -> String {
     }
 }
 
-async fn wait_termination() -> Result<(), Box<dyn Error>> {
-    let inner_runtime = Runtime::new().unwrap();
-    let result = signal::ctrl_c().await.map_err(|e| e.into());
-    inner_runtime.shutdown_background();
-    result
+struct WslRunner {
+    listen_address: &'static str,
+}
+
+impl WslRunner {
+    fn new() -> WslRunner {
+        WslRunner {
+            listen_address: "0.0.0.0:2022",
+        }
+    }
+
+    async fn wait_termination(&self, mut recv: Receiver<()>) -> Result<(), std::io::Error> {
+        let inner_runtime = tokio::runtime::Runtime::new().unwrap();
+        self.listen_port().await?;
+        signal::ctrl_c().await?;
+        recv.recv().await;
+        inner_runtime.shutdown_timeout(Duration::from_secs(60));
+        Ok(())
+    }
+
+    async fn process_socket(&self, socket: TcpStream) -> Result<usize, std::io::Error> {
+        let buf = "asdf".as_bytes();
+        socket.try_write(buf)
+    }
+
+    async fn listen_port(&self) -> Result<(), std::io::Error> {
+        let listener = TcpListener::bind(self.listen_address).await?;
+        loop {
+            let (socket, _) = listener.accept().await?;
+            self.process_socket(socket).await;
+        }
+    }
+
+    fn run(&self) -> Result<(), Box<dyn Error>> {
+        let rt = tokio::runtime::Runtime::new()?;
+        let (send, recv) = channel(1);
+        rt.block_on(self.wait_termination(recv))
+            .map_err(|e| e.into())
+    }
 }
 
 // Run
@@ -124,6 +161,5 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // After exiting main, StayAwake instance is dropped and the thread execution
     //   state is reset to ES_CONTINUOUS
 
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(wait_termination())
+    WslRunner::new().run()
 }
