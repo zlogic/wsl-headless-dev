@@ -51,7 +51,7 @@ impl Drop for StayAwake {
         let prev_es = self.update_execution_state(next_es);
         let prev_es_label = execution_state_as_string(prev_es);
         println!(
-            "\nReset thread execution state:\n    {} ==> {} ({:#X})\n      {} ==> {} ({:#X})",
+            "\r\nReset thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})\r",
             String::from("From").red(),
             prev_es_label,
             prev_es.0,
@@ -112,8 +112,8 @@ impl WslRunner {
                 }
                 val = command_wait.wait() => {
                     match val {
-                        Ok(exit_status) => println!("Command exited: {}", exit_status.to_string().green()),
-                        Err(err) => println!("Command failed with {} error",err.to_string().green()),
+                        Ok(exit_status) => println!("Command exited: {}\r", exit_status.to_string().green()),
+                        Err(err) => println!("Command failed with {} error\r",err.to_string().green()),
                     }
                     // TODO: improve error handling here.
                     command = self.launch_command();
@@ -121,13 +121,14 @@ impl WslRunner {
                 }
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
-                        println!("Received connection from {}", addr.to_string().bold());
+                        println!("Received connection from {}\r", addr.to_string().bold());
                         let target_address = self.target_address;
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
                 }
             }
         }
+        command_wait.kill().await?;
         Ok(())
     }
 
@@ -150,7 +151,7 @@ impl WslRunner {
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
                 println!(
-                    "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)",
+                    "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)\r",
                     addr.to_string(),
                     to_egress.to_string().purple(),
                     to_ingress.to_string().blue(),
@@ -159,7 +160,7 @@ impl WslRunner {
             }
             Err(err) => {
                 println!(
-                    "Error while proxying (addr {}): {}",
+                    "Error while proxying (addr {}): {}\r",
                     addr.to_string(),
                     err.to_string().red()
                 );
@@ -180,12 +181,12 @@ impl WslRunner {
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // requested execution state
     let req_es = if args.display {
-        println!("Running in {} mode ==> the machine will not go to sleep and the display will remain on", String::from("Display").green());
+        println!("Running in {} mode ==> the machine will not go to sleep and the display will remain on\r", String::from("Display").green());
 
         ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
     } else {
         println!(
-            "Running in {} mode ==> the machine will not go to sleep",
+            "Running in {} mode ==> the machine will not go to sleep\r",
             String::from("System").green()
         );
 
@@ -205,7 +206,7 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
     // print
     println!(
-        "\nSet thread execution state:\n    {} ==> {} ({:#X})\n      {} ==> {} ({:#X})",
+        "\r\nSet thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})",
         String::from("From").purple(),
         prev_es_label,
         prev_es.0,
