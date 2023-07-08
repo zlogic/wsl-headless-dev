@@ -153,7 +153,7 @@ impl WslRunner {
             Ok((to_egress, to_ingress)) => {
                 println!(
                     "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)\r",
-                    addr.to_string(),
+                    addr,
                     to_egress.to_string().purple(),
                     to_ingress.to_string().blue(),
                 );
@@ -162,7 +162,7 @@ impl WslRunner {
             Err(err) => {
                 println!(
                     "Error while proxying (addr {}): {}\r",
-                    addr.to_string(),
+                    addr,
                     err.to_string().red()
                 );
                 Err(err)
