@@ -12,7 +12,7 @@ license = "Apache-2.0"
 clap = { version = "~4.3", features = ["derive"] }
 colored = { version = "~2" }
 windows = { version = "~0.48", features = ["Win32_System_Power"] }
-tokio = { version = "~1.29", default-features = false, features = ["macros", "rt-multi-thread", "io-util", "sync", "signal", "net"] }
+tokio = { version = "~1.29", default-features = false, features = ["macros", "rt-multi-thread", "io-util", "sync", "signal", "net", "process"] }
 
 [profile.release]
 strip = true

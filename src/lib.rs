@@ -2,6 +2,7 @@ use std::error::Error;
 use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
+use tokio::process::Command;
 use tokio::signal;
 use tokio::sync::mpsc::{channel, Receiver};
 
@@ -20,7 +21,7 @@ use windows::Win32::System::Power::{
 // CLI
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
-/// Keep a Windows machine awake
+/// Run an SSH port redirector and keep Windows awake
 pub struct Args {
     /// Keep display on
     #[clap(long)]
@@ -82,6 +83,7 @@ fn execution_state_as_string(es: EXECUTION_STATE) -> String {
 struct WslRunner {
     listen_address: &'static str,
     target_address: &'static str,
+    launch_command: &'static str,
 }
 
 impl WslRunner {
@@ -89,6 +91,7 @@ impl WslRunner {
         WslRunner {
             listen_address: "0.0.0.0:2022",
             target_address: "localhost:2022",
+            launch_command: "wsl /usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config",
         }
     }
 
@@ -96,31 +99,44 @@ impl WslRunner {
         //let (send, mut recv) = channel::<()>(1);
         let listen_address = self.listen_address;
         let target_address = self.target_address;
+        let launch_command = self.launch_command;
+        tokio::spawn(WslRunner::launch_command(launch_command));
         tokio::spawn(WslRunner::listen_port(listen_address, target_address));
         signal::ctrl_c().await?;
         //recv.recv().await;
         Ok(())
     }
 
+    async fn launch_command(cmd: &'static str) {
+        let cmd_parts = cmd.split(' ').collect::<Vec<_>>();
+        loop {
+            let output = Command::new(cmd_parts[0])
+                .args(&cmd_parts[1..])
+                .output()
+                .await;
+        }
+    }
+
     async fn listen_port(
         listen_address: &'static str,
         target_address: &'static str,
     ) -> Result<(), std::io::Error> {
-        println!("Listener opening {listen_address}");
         let listener = TcpListener::bind(listen_address).await?;
-        println!("Listener opened");
+        println!("Opened listener on {}", String::from(listen_address).bold());
         while let Ok((mut ingress, addr)) = listener.accept().await {
-            println!("Incoming connection from ingress {}", addr);
+            println!("Received connection from {}", addr.to_string().bold());
             tokio::spawn(async move {
                 let mut egress = TcpStream::connect(target_address).await.unwrap();
                 match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
                     Ok((to_egress, to_ingress)) => {
                         println!(
-                            "Connection ended gracefully ({to_egress} bytes from client, {to_ingress} bytes from server)"
+                            "Connection ended gracefully ({} bytes from client, {} bytes from server)",
+                            to_egress.to_string().purple(),
+                            to_ingress.to_string().blue(),
                         );
                     }
                     Err(err) => {
-                        println!("Error while proxying: {}", err);
+                        println!("Error while proxying: {}", err.to_string().red());
                     }
                 }
             });
@@ -140,12 +156,12 @@ impl WslRunner {
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // requested execution state
     let req_es = if args.display {
-        println!("Running in ``{}`` mode ==> the machine will not go to sleep and the display will remain on", String::from("Display").green());
+        println!("Running in {} mode ==> the machine will not go to sleep and the display will remain on", String::from("Display").green());
 
         ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
     } else {
         println!(
-            "Running in ``{}`` mode ==> the machine will not go to sleep",
+            "Running in {} mode ==> the machine will not go to sleep",
             String::from("System").green()
         );
 
