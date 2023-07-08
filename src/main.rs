@@ -1,6 +1,6 @@
 use clap::Parser;
-use wsl_headless_dev::Args;
 use std::process;
+use wsl_headless_dev::Args;
 
 fn main() {
     let args = Args::parse();

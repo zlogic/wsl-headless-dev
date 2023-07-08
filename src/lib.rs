@@ -1,6 +1,6 @@
 use std::error::Error;
-use std::io;
-use std::io::Write;
+
+use tokio::{runtime::Runtime, signal};
 
 use clap::Parser;
 use colored::Colorize;
@@ -76,6 +76,13 @@ fn execution_state_as_string(es: EXECUTION_STATE) -> String {
     }
 }
 
+async fn wait_termination() -> Result<(), Box<dyn Error>> {
+    let inner_runtime = Runtime::new().unwrap();
+    let result = signal::ctrl_c().await.map_err(|e| e.into());
+    inner_runtime.shutdown_background();
+    result
+}
+
 // Run
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // requested execution state
@@ -114,16 +121,9 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
         next_es.0
     );
 
-    print!(
-        "\nPress ``{}`` key to reset ",
-        String::from("Enter").yellow()
-    );
-    io::stdout().flush().unwrap();
-
-    let mut buffer = String::new();
-    let _ = io::stdin().read_line(&mut buffer)?;
-
     // After exiting main, StayAwake instance is dropped and the thread execution
     //   state is reset to ES_CONTINUOUS
-    Ok(())
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(wait_termination())
 }

@@ -9,9 +9,10 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-colored = { version = "2" }
-windows = { version = "0.48", features = ["Win32_System_Power"]}
+clap = { version = "~4.3", features = ["derive"] }
+colored = { version = "~2" }
+windows = { version = "~0.48", features = ["Win32_System_Power"] }
+tokio = { version = "~1.29", default-features = false, features = ["macros", "rt-multi-thread", "signal"] }
 
 [profile.release]
 strip = true
