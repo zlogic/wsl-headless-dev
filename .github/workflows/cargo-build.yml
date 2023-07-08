@@ -1,0 +1,48 @@
+name: Cargo build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [aarch64, x86_64]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache Rust dependencies and artifacts
+      id: cache-rust
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~\.cargo\registry\index
+          ~\.cargo\registry\cache
+          ~\.cargo\git\db
+          ${{ github.workspace }}\target
+        key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+
+    - name: Install compiler and prepare for cross-compilation
+      if: matrix.arch == 'aarch64'
+      run: rustup target add ${{ matrix.arch }}-pc-windows-msvc
+
+    - name: Build
+      run: |
+        $Env:RUSTFLAGS = "-C target-feature=+crt-static"
+        cargo build --target=${{ matrix.arch }}-pc-windows-msvc --release
+
+    - name: Package application
+      run: Compress-Archive -Path .\target\${{ matrix.arch }}-pc-windows-msvc\release\wsl-headless-dev.exe -DestinationPath wsl-headless-dev-${{ runner.os }}-${{ matrix.arch }}.zip
+
+    - name: Upload application
+      uses: actions/upload-artifact@v3
+      with:
+        name: wsl-headless-dev-${{ runner.os }}-${{ matrix.arch }}
+        path: wsl-headless-dev-*.zip
