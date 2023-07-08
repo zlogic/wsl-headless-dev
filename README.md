@@ -13,6 +13,7 @@ Install and configure WSL.
 Generate SSH host keys:
 
 ```shell
+sudo apt install openssh-server
 mkdir -p ~/.ssh/sshd
 ssh-keygen -q -N "" -t dsa -f ~/.ssh/sshd/ssh_host_dsa_key
 ssh-keygen -q -N "" -t rsa -b 4096 -f ~/.ssh/sshd/ssh_host_rsa_key
@@ -20,6 +21,8 @@ ssh-keygen -q -N "" -t ecdsa -f ~/.ssh/sshd/ssh_host_ecdsa_key
 ssh-keygen -q -N "" -t ed25519 -f ~/.ssh/sshd/ssh_host_ed25519_key
 cp /etc/ssh/sshd_config ~/.ssh/sshd
 ```
+
+Then update paths to `HostKey` and the port (to `2022`) in `~/.ssh/sshd/sshd_config`.
 
 ## Optional extras
 

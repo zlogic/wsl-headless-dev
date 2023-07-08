@@ -1,10 +1,10 @@
 use std::error::Error;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
 use tokio::signal;
-use tokio::sync::mpsc::{channel, Receiver};
 
 use clap::Parser;
 use colored::Colorize;
@@ -96,52 +96,60 @@ impl WslRunner {
     }
 
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
-        //let (send, mut recv) = channel::<()>(1);
-        let listen_address = self.listen_address;
-        let target_address = self.target_address;
         let launch_command = self.launch_command;
+
+        let listener = TcpListener::bind(self.listen_address).await?;
+        println!(
+            "Opened listener on {}",
+            String::from(self.listen_address).bold()
+        );
+
         tokio::spawn(WslRunner::launch_command(launch_command));
-        tokio::spawn(WslRunner::listen_port(listen_address, target_address));
-        signal::ctrl_c().await?;
-        //recv.recv().await;
+        loop {
+            tokio::select! {
+                val = listener.accept() =>{
+                    if let Ok((ingress, addr)) = val {
+                        println!("Received connection from {}", addr.to_string().bold());
+                        let target_address = self.target_address;
+                        tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
+                    }
+                }
+                _ = signal::ctrl_c() => {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 
     async fn launch_command(cmd: &'static str) {
         let cmd_parts = cmd.split(' ').collect::<Vec<_>>();
-        loop {
-            let output = Command::new(cmd_parts[0])
-                .args(&cmd_parts[1..])
-                .output()
-                .await;
-        }
+        let output = Command::new(cmd_parts[0])
+            .args(&cmd_parts[1..])
+            .output()
+            .await;
     }
 
-    async fn listen_port(
-        listen_address: &'static str,
+    async fn handle_socket(
+        mut ingress: TcpStream,
+        addr: SocketAddr,
         target_address: &'static str,
     ) -> Result<(), std::io::Error> {
-        let listener = TcpListener::bind(listen_address).await?;
-        println!("Opened listener on {}", String::from(listen_address).bold());
-        while let Ok((mut ingress, addr)) = listener.accept().await {
-            println!("Received connection from {}", addr.to_string().bold());
-            tokio::spawn(async move {
-                let mut egress = TcpStream::connect(target_address).await.unwrap();
-                match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
-                    Ok((to_egress, to_ingress)) => {
-                        println!(
-                            "Connection ended gracefully ({} bytes from client, {} bytes from server)",
-                            to_egress.to_string().purple(),
-                            to_ingress.to_string().blue(),
-                        );
-                    }
-                    Err(err) => {
-                        println!("Error while proxying: {}", err.to_string().red());
-                    }
-                }
-            });
+        let mut egress = TcpStream::connect(target_address).await.unwrap();
+        match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
+            Ok((to_egress, to_ingress)) => {
+                println!(
+                    "Connection ended gracefully ({} bytes from client, {} bytes from server)",
+                    to_egress.to_string().purple(),
+                    to_ingress.to_string().blue(),
+                );
+                Ok(())
+            }
+            Err(err) => {
+                println!("Error while proxying: {}", err.to_string().red());
+                Err(err)
+            }
         }
-        Ok(())
     }
 
     fn run(&self) -> Result<(), std::io::Error> {
