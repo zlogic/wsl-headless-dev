@@ -81,17 +81,20 @@ fn execution_state_as_string(es: EXECUTION_STATE) -> String {
 
 struct WslRunner {
     listen_address: &'static str,
+    target_address: &'static str,
 }
 
 impl WslRunner {
     fn new() -> WslRunner {
         WslRunner {
             listen_address: "0.0.0.0:2022",
+            target_address: "localhost:2022",
         }
     }
 
-    async fn wait_termination(&self, mut recv: Receiver<()>) -> Result<(), std::io::Error> {
+    async fn wait_termination(&self) -> Result<(), std::io::Error> {
         let inner_runtime = tokio::runtime::Runtime::new().unwrap();
+        let (send, mut recv) = channel::<()>(1);
         self.listen_port().await?;
         signal::ctrl_c().await?;
         recv.recv().await;
@@ -99,24 +102,31 @@ impl WslRunner {
         Ok(())
     }
 
-    async fn process_socket(&self, socket: TcpStream) -> Result<usize, std::io::Error> {
-        let buf = "asdf".as_bytes();
-        socket.try_write(buf)
-    }
-
     async fn listen_port(&self) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(self.listen_address).await?;
-        loop {
-            let (socket, _) = listener.accept().await?;
-            self.process_socket(socket).await;
+        let target_address = self.target_address;
+        while let Ok((mut ingress, addr)) = listener.accept().await {
+            println!("Incoming connection from ingress {}", addr);
+            tokio::spawn(async move {
+                let mut egress = TcpStream::connect(target_address).await.unwrap();
+                match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
+                    Ok((to_egress, to_ingress)) => {
+                        println!(
+                            "Connection ended gracefully ({to_egress} bytes from client, {to_ingress} bytes from server)"
+                        );
+                    }
+                    Err(err) => {
+                        println!("Error while proxying: {}", err);
+                    }
+                }
+            });
         }
+        Ok(())
     }
 
     fn run(&self) -> Result<(), Box<dyn Error>> {
         let rt = tokio::runtime::Runtime::new()?;
-        let (send, recv) = channel(1);
-        rt.block_on(self.wait_termination(recv))
-            .map_err(|e| e.into())
+        rt.block_on(self.wait_termination()).map_err(|e| e.into())
     }
 }
 
