@@ -136,8 +136,8 @@ impl WslRunner {
         Command::new(cmd_parts[0])
             .args(&cmd_parts[1..])
             .kill_on_drop(true)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
     }
 
