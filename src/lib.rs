@@ -3,13 +3,13 @@ use std::net::SocketAddr;
 use std::process::Stdio;
 use std::time::Duration;
 
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::signal;
 
 use clap::Parser;
 use colored::Colorize;
-use windows::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_C_EVENT};
 use windows::Win32::System::Power::{
     SetThreadExecutionState,
     // ES_AWAYMODE_REQUIRED,
@@ -51,8 +51,8 @@ impl Drop for StayAwake {
         let next_es_label = execution_state_as_string(next_es);
         let prev_es = self.update_execution_state(next_es);
         let prev_es_label = execution_state_as_string(prev_es);
-        println!(
-            "\r\nReset thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})\r",
+        print!(
+            "Reset thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})\r\n",
             String::from("From").red(),
             prev_es_label,
             prev_es.0,
@@ -93,38 +93,40 @@ impl WslRunner {
         WslRunner {
             listen_address: "0.0.0.0:2022",
             target_address: "localhost:2022",
-            launch_command: "wsl /usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config",
+            launch_command: "(cat && kill 0) | /usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config",
         }
     }
 
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(self.listen_address).await?;
-        println!(
-            "Opened listener on {}",
+        print!(
+            "Opened listener on {}\r\n",
             String::from(self.listen_address).bold()
         );
 
         let mut command = self.launch_command()?;
-        // TODO: pipe outputs.
         let mut stdin = command.stdin.take();
+        tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
+        tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
         loop {
             tokio::select! {
                 _ = signal::ctrl_c() => {
-                    //unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0); }
                     break;
                 }
                 val = command.wait() => {
                     match val {
-                        Ok(exit_status) => println!("Command exited: {}\r", exit_status.to_string().green()),
-                        Err(err) => println!("Command failed with {} error\r",err.to_string().green()),
+                        Ok(exit_status) => print!("Command exited: {}\r\n", exit_status.to_string().green()),
+                        Err(err) => print!("Command failed with {} error\r\n",err.to_string().green()),
                     }
                     // TODO: improve error handling here.
                     command = self.launch_command()?;
                     stdin = command.stdin.take();
+                    tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
+                    tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
                 }
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
-                        println!("Received connection from {}\r", addr.to_string().bold());
+                        print!("Received connection from {}\r\n", addr.to_string().bold());
                         let target_address = self.target_address;
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
@@ -137,13 +139,27 @@ impl WslRunner {
         Ok(())
     }
 
+    async fn redirect_stream<R: AsyncRead + Unpin>(
+        stream: Option<R>,
+    ) -> Result<(), std::io::Error> {
+        let stream = if let Some(stream) = stream {
+            stream
+        } else {
+            return Ok(());
+        };
+        let reader = BufReader::new(stream);
+        let mut lines = reader.lines();
+        while let Some(line) = lines.next_line().await? {
+            print!("Command output: {}\r\n", line.yellow())
+        }
+        Ok(())
+    }
+
     fn launch_command(&self) -> Result<Child, std::io::Error> {
-        let cmd_parts = self.launch_command.split(' ').collect::<Vec<_>>();
         Command::new("wsl")
             .arg("bash")
             .arg("-c")
-            .arg("(cat && kill 0) | /usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config")
-            .kill_on_drop(true)
+            .arg(self.launch_command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::piped())
@@ -158,8 +174,8 @@ impl WslRunner {
         let mut egress = TcpStream::connect(target_address).await.unwrap();
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
-                println!(
-                    "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)\r",
+                print!(
+                    "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)\r\n",
                     addr,
                     to_egress.to_string().purple(),
                     to_ingress.to_string().blue(),
@@ -167,8 +183,8 @@ impl WslRunner {
                 Ok(())
             }
             Err(err) => {
-                println!(
-                    "Error while proxying (addr {}): {}\r",
+                print!(
+                    "Error while proxying (addr {}): {}\r\n",
                     addr,
                     err.to_string().red()
                 );
@@ -189,12 +205,12 @@ impl WslRunner {
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // requested execution state
     let req_es = if args.display {
-        println!("Running in {} mode ==> the machine will not go to sleep and the display will remain on\r", String::from("Display").green());
+        print!("Running in {} mode ==> the machine will not go to sleep and the display will remain on\r\n", String::from("Display").green());
 
         ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
     } else {
-        println!(
-            "Running in {} mode ==> the machine will not go to sleep\r",
+        print!(
+            "Running in {} mode ==> the machine will not go to sleep\r\n",
             String::from("System").green()
         );
 
@@ -213,8 +229,8 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let prev_es_label = execution_state_as_string(prev_es);
 
     // print
-    println!(
-        "\r\nSet thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})",
+    print!(
+        "Set thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})\r\n",
         String::from("From").purple(),
         prev_es_label,
         prev_es.0,
