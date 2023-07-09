@@ -86,6 +86,7 @@ struct WslRunner {
     listen_address: &'static str,
     target_address: &'static str,
     launch_command: &'static str,
+    shutdown_command: &'static str,
 }
 
 impl WslRunner {
@@ -93,7 +94,8 @@ impl WslRunner {
         WslRunner {
             listen_address: "0.0.0.0:2022",
             target_address: "localhost:2022",
-            launch_command: "(cat && kill 0) | /usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config",
+            launch_command: "/usr/sbin/sshd -D -o Port=2022 -o HostKey=~/.ssh/sshd/ssh_host_rsa_key -o HostKey=~/.ssh/sshd/ssh_host_ecdsa_key -o HostKey=~/.ssh/sshd/ssh_host_ed25519_key -o PidFile=/run/user/$(id -u)/sshd.pid",
+            shutdown_command: "kill $(cat /run/user/$(id -u)/sshd.pid)",
         }
     }
 
@@ -104,7 +106,7 @@ impl WslRunner {
             String::from(self.listen_address).bold()
         );
 
-        let mut command = self.launch_command()?;
+        let mut command = WslRunner::launch_command(self.launch_command)?;
         let mut stdin = command.stdin.take();
         tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
         tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
@@ -119,7 +121,7 @@ impl WslRunner {
                         Err(err) => print!("Command failed with {} error\r\n",err.to_string().green()),
                     }
                     // TODO: improve error handling here.
-                    command = self.launch_command()?;
+                    command = WslRunner::launch_command(self.launch_command)?;
                     stdin = command.stdin.take();
                     tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
                     tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
@@ -134,7 +136,10 @@ impl WslRunner {
             }
         }
         drop(stdin);
-        //command.kill().await?;
+
+        let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
+        shutdown_command.wait().await?;
+
         command.wait().await?;
         Ok(())
     }
@@ -155,11 +160,11 @@ impl WslRunner {
         Ok(())
     }
 
-    fn launch_command(&self) -> Result<Child, std::io::Error> {
+    fn launch_command(cmd: &'static str) -> Result<Child, std::io::Error> {
         Command::new("wsl")
             .arg("bash")
             .arg("-c")
-            .arg(self.launch_command)
+            .arg(cmd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::piped())
