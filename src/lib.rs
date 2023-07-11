@@ -92,7 +92,7 @@ struct WslRunner {
 impl WslRunner {
     fn new() -> WslRunner {
         WslRunner {
-            listen_address: "0.0.0.0:2022",
+            listen_address: "0.0.0.0:22",
             target_address: "localhost:2022",
             launch_command: "/usr/sbin/sshd -D -o Port=2022 -o HostKey=~/.ssh/sshd/ssh_host_rsa_key -o HostKey=~/.ssh/sshd/ssh_host_ecdsa_key -o HostKey=~/.ssh/sshd/ssh_host_ed25519_key -o PidFile=/run/user/$(id -u)/sshd.pid",
             shutdown_command: "kill $(cat /run/user/$(id -u)/sshd.pid)",
