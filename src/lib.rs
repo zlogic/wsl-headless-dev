@@ -20,6 +20,9 @@ use windows::Win32::System::Power::{
     EXECUTION_STATE,
 };
 
+const LAUNCH_COMMAND:&'static str = "/usr/sbin/sshd -D -o Port=2022 -o HostKey=~/.ssh/sshd/ssh_host_rsa_key -o HostKey=~/.ssh/sshd/ssh_host_ecdsa_key -o HostKey=~/.ssh/sshd/ssh_host_ed25519_key -o PidFile=/run/user/$(id -u)/sshd.pid";
+const SHUTDOWN_COMMAND: &'static str = "kill $(cat /run/user/$(id -u)/sshd.pid)";
+
 // CLI
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -28,6 +31,12 @@ pub struct Args {
     /// Keep display on
     #[clap(long)]
     pub display: bool,
+    /// Start command
+    #[clap(default_value = LAUNCH_COMMAND)]
+    pub launch_command: String,
+    /// Shutdown command
+    #[clap(default_value = SHUTDOWN_COMMAND)]
+    pub shutdown_command: String,
 }
 
 // Storing the execution state within a struct ensures that the thread execution state
@@ -82,20 +91,20 @@ fn execution_state_as_string(es: EXECUTION_STATE) -> String {
     }
 }
 
-struct WslRunner {
-    listen_address: &'static str,
-    target_address: &'static str,
-    launch_command: &'static str,
-    shutdown_command: &'static str,
+struct WslRunner<'a> {
+    listen_address: &'a str,
+    target_address: &'a str,
+    launch_command: &'a str,
+    shutdown_command: &'a str,
 }
 
-impl WslRunner {
-    fn new() -> WslRunner {
+impl WslRunner<'_> {
+    fn new<'a>(launch_command: &'a str, shutdown_command: &'a str) -> WslRunner<'a> {
         WslRunner {
             listen_address: "0.0.0.0:22",
             target_address: "localhost:2022",
-            launch_command: "/usr/sbin/sshd -D -o Port=2022 -o HostKey=~/.ssh/sshd/ssh_host_rsa_key -o HostKey=~/.ssh/sshd/ssh_host_ecdsa_key -o HostKey=~/.ssh/sshd/ssh_host_ed25519_key -o PidFile=/run/user/$(id -u)/sshd.pid",
-            shutdown_command: "kill $(cat /run/user/$(id -u)/sshd.pid)",
+            launch_command,
+            shutdown_command,
         }
     }
 
@@ -129,7 +138,7 @@ impl WslRunner {
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
                         print!("Received connection from {}\r\n", addr.to_string().bold());
-                        let target_address = self.target_address;
+                        let target_address = self.target_address.to_string();
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
                 }
@@ -160,7 +169,7 @@ impl WslRunner {
         Ok(())
     }
 
-    fn launch_command(cmd: &'static str) -> Result<Child, std::io::Error> {
+    fn launch_command(cmd: &str) -> Result<Child, std::io::Error> {
         Command::new("wsl")
             .arg("bash")
             .arg("-c")
@@ -174,7 +183,7 @@ impl WslRunner {
     async fn handle_socket(
         mut ingress: TcpStream,
         addr: SocketAddr,
-        target_address: &'static str,
+        target_address: String,
     ) -> Result<(), std::io::Error> {
         let mut egress = TcpStream::connect(target_address).await.unwrap();
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
@@ -247,5 +256,9 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // After exiting main, StayAwake instance is dropped and the thread execution
     //   state is reset to ES_CONTINUOUS
 
-    WslRunner::new().run().map_err(|e| e.into())
+    let launch_command = &args.launch_command.as_str();
+    let shutdown_command = &args.shutdown_command.as_str();
+    WslRunner::new(launch_command, shutdown_command)
+        .run()
+        .map_err(|e| e.into())
 }
