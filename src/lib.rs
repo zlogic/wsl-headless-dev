@@ -20,8 +20,8 @@ use windows::Win32::System::Power::{
     EXECUTION_STATE,
 };
 
-const LAUNCH_COMMAND:&'static str = "/usr/sbin/sshd -D -o Port=2022 -o HostKey=~/.ssh/sshd/ssh_host_rsa_key -o HostKey=~/.ssh/sshd/ssh_host_ecdsa_key -o HostKey=~/.ssh/sshd/ssh_host_ed25519_key -o PidFile=/run/user/$(id -u)/sshd.pid";
-const SHUTDOWN_COMMAND: &'static str = "kill $(cat /run/user/$(id -u)/sshd.pid)";
+const LAUNCH_COMMAND: &'static str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
+const SHUTDOWN_COMMAND: &'static str = "kill $(cat ~/.ssh/sshd.pid); rm ~/.ssh/sshd.pid";
 
 // CLI
 #[derive(Parser, Debug)]
