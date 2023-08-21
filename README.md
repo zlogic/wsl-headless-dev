@@ -1,10 +1,22 @@
 # WSL headless developer tools
 
-This Rust project can be used to turn your old Windows machine into a VSCode dev server.
+This quick & dirty Rust project can be used to turn your old Windows machine into an SSH dev server.
 
-1. Disables Windows sleep.
-2. Starts an SSH port forwarder - redirecting SSH connections to an SSH server in WSL.
+It's one binary that does the following:
+
+1. Prevents Windows sleep while it's running.
+2. Starts an SSH port forwarder from `0.0.0.0:22` to WSL's port 2022 - redirecting SSH connections to an SSH server in WSL.
 3. Launches a startup script (an SSH server) in WSL and automatically restarts it in case it crashes.
+
+Stopping this tool (press <kbd>CTRL</kbd>+<kbd>C</kbd>) will shut down the SSH server and allow Windows to sleep.
+
+## What might you need it for
+
+* If you prefer your development machine and switching to another OS or keyboard layout is uncomfortable
+* To borrow a Windows PC that's more powerful than your primary development machine (or has extra hardware)
+  * e.g. to develop/run CUDA or x86 code from a lightweight ARM64 laptop
+  * or to access a gaming PC from another area of your house for ML workloads
+* If double-booting a real Linux OS or running a real Linux VM on the Windows machine is impractical
 
 ## Preparations
 
@@ -25,10 +37,11 @@ sudo cat /etc/ssh/sshd_config > ~/.ssh/sshd/sshd_config
 Then update paths to `HostKey` and the port (to `2022`) in `~/.ssh/sshd/sshd_config`.
 Set PidFile to `~/.ssh/sshd.pid`.
 
-## Optional extras
+## How to use it
 
-Install [VSCode Server](https://code.visualstudio.com/docs/remote/vscode-server) into WSL.
-Launch `vscode tunnel` once to configure VSCode tunneling and link it with your Github account.
+Connect to your Windows machine using ssh, with the default port (22).
+
+The [VSCode SSH extension](https://code.visualstudio.com/docs/remote/ssh) works well with this tool - extensions run in WSL, while VSCode just shows the UI.
 
 # External dependencies
 
