@@ -11,13 +11,7 @@ use tokio::signal;
 
 use clap::Parser;
 use windows::Win32::System::Power::{
-    SetThreadExecutionState,
-    // ES_AWAYMODE_REQUIRED,
-    ES_CONTINUOUS,
-    ES_DISPLAY_REQUIRED,
-    ES_SYSTEM_REQUIRED,
-    // ES_USER_PRESENT,
-    EXECUTION_STATE,
+    SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
 };
 
 use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, TRUE};
@@ -30,6 +24,7 @@ use windows::Win32::System::Console::{
 
 const LAUNCH_COMMAND: &'static str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
 const SHUTDOWN_COMMAND: &'static str = "kill $(cat ~/.ssh/sshd.pid); rm ~/.ssh/sshd.pid";
+const PREVENT_SLEEP_TIMER: Duration = Duration::from_secs(60);
 
 // CLI
 #[derive(Parser, Debug)]
@@ -45,55 +40,6 @@ pub struct Args {
     /// Shutdown command
     #[clap(default_value = SHUTDOWN_COMMAND)]
     pub shutdown_command: String,
-}
-
-// Storing the execution state within a struct ensures that the thread execution state
-//   is reset to ES_CONTINUOUS (via the implementation of the Drop trait) when the struct
-//   goes out of scope
-struct StayAwake(EXECUTION_STATE);
-
-impl StayAwake {
-    fn new() -> Self {
-        Self(ES_CONTINUOUS)
-    }
-
-    fn update_execution_state(&self, next_es: EXECUTION_STATE) -> EXECUTION_STATE {
-        unsafe { SetThreadExecutionState(ES_CONTINUOUS | next_es) }
-    }
-}
-
-impl Drop for StayAwake {
-    fn drop(&mut self) {
-        let next_es = ES_CONTINUOUS;
-        let next_es_label = execution_state_as_string(next_es);
-        let prev_es = self.update_execution_state(next_es);
-        let prev_es_label = execution_state_as_string(prev_es);
-        print!(
-            "Reset thread execution state:\r\n    \
-            \x1b[0;31mFrom\x1b[0;39;49m ==> {} ({:#X})\r\n      \
-            \x1b[0;34mTo\x1b[0;39;49m ==> {} ({:#X})\r\n",
-            prev_es_label, prev_es.0, next_es_label, next_es.0
-        );
-    }
-}
-
-// Helper
-const ES_CONT_BOR_ES_DISPLAY_BOR_ES_SYSTEM: EXECUTION_STATE =
-    EXECUTION_STATE(ES_CONTINUOUS.0 | ES_DISPLAY_REQUIRED.0 | ES_SYSTEM_REQUIRED.0);
-const ES_CONT_BOR_ES_SYSTEM: EXECUTION_STATE =
-    EXECUTION_STATE(ES_CONTINUOUS.0 | ES_SYSTEM_REQUIRED.0);
-
-fn execution_state_as_string(es: EXECUTION_STATE) -> String {
-    match es {
-        ES_CONTINUOUS => String::from("ES_CONTINUOUS"),
-        ES_DISPLAY_REQUIRED => String::from("ES_DISPLAY_REQUIRED"),
-        ES_SYSTEM_REQUIRED => String::from("ES_SYSTEM_REQUIRED"),
-        ES_CONT_BOR_ES_DISPLAY_BOR_ES_SYSTEM => {
-            String::from("ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED")
-        }
-        ES_CONT_BOR_ES_SYSTEM => String::from("ES_CONTINUOUS | ES_SYSTEM_REQUIRED"),
-        _ => String::from("???"),
-    }
 }
 
 struct WslRunner<'a> {
@@ -124,6 +70,7 @@ impl WslRunner<'_> {
         let mut stdin = command.stdin.take();
         tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
         tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
+        let mut interval = tokio::time::interval(PREVENT_SLEEP_TIMER);
         loop {
             tokio::select! {
                 _ = signal::ctrl_c() => {
@@ -146,6 +93,9 @@ impl WslRunner<'_> {
                         let target_address = self.target_address.to_string();
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
+                }
+                _ = interval.tick() =>{
+                    prevent_sleep()
                 }
             }
         }
@@ -194,8 +144,7 @@ impl WslRunner<'_> {
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
                 print!(
-                    "Connection with \x1b[1m{}\x1b[0m ended gracefully\
-                    ({} sent, {} bytes received)\r\n",
+                    "Connection with \x1b[1m{}\x1b[0m ended gracefully ({} sent, {} bytes received)\r\n",
                     addr, to_ingress, to_egress
                 );
                 Ok(())
@@ -219,7 +168,6 @@ impl WslRunner<'_> {
 }
 
 fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
-    // Most of the Windows APIs are unsafe.
     unsafe {
         let console_handle = CreateFileW(
             windows::w!("CONOUT$"),
@@ -246,42 +194,20 @@ fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn prevent_sleep() {
+    // ES_CONTINUOUS keeps the flag while the thread is running; ES_SYSTEM_REQUIRED prevents system sleep.
+    // Add ES_DISPLAY_REQUIRED flag to prevent display from turning off.
+    const REQUESTED_ES: EXECUTION_STATE = EXECUTION_STATE(ES_CONTINUOUS.0 | ES_SYSTEM_REQUIRED.0);
+    let previous_state = unsafe { SetThreadExecutionState(REQUESTED_ES) };
+
+    if previous_state != REQUESTED_ES {
+        print!(
+        "Preventing system sleep (changed thread execution state from \x1b[0;31m{:#X}\x1b[0;39;49m to \x1b[0;34m{:#X}\x1b[0;39;49m\r\n", previous_state.0, REQUESTED_ES.0);
+    }
+}
+
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
-    // Set terminal mode.
     enable_vt100_mode()?;
-
-    // requested execution state
-    let req_es = if args.display {
-        print!("Running in \x1b[1mDisplay\x1b[0m mode ==> the machine will not go to sleep and the display will remain on\r\n");
-
-        ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
-    } else {
-        print!("Running in \x1b[1mSystem\x1b[0m mode ==> the machine will not go to sleep\r\n",);
-
-        ES_SYSTEM_REQUIRED
-    };
-
-    // state to set - must combine ES_CONTINUOUS with another state
-    let next_es = ES_CONTINUOUS | req_es;
-    let next_es_label = execution_state_as_string(next_es);
-
-    // initialize struct
-    let sa = StayAwake::new();
-
-    // set thread execution state
-    let prev_es = sa.update_execution_state(next_es);
-    let prev_es_label = execution_state_as_string(prev_es);
-
-    // print
-    print!(
-        "Set thread execution state:\r\n    \
-            \x1b[0;31mFrom\x1b[0;39;49m ==> {} ({:#X})\r\n      \
-            \x1b[0;34mTo\x1b[0;39;49m ==> {} ({:#X})\r\n",
-        prev_es_label, prev_es.0, next_es_label, next_es.0
-    );
-
-    // After exiting main, StayAwake instance is dropped and the thread execution
-    //   state is reset to ES_CONTINUOUS
 
     let launch_command = &args.launch_command.as_str();
     let shutdown_command = &args.shutdown_command.as_str();
