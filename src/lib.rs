@@ -9,7 +9,6 @@ use tokio::process::{Child, Command};
 use tokio::signal;
 
 use clap::Parser;
-use colored::Colorize;
 use windows::Win32::System::Power::{
     SetThreadExecutionState,
     // ES_AWAYMODE_REQUIRED,
@@ -61,13 +60,10 @@ impl Drop for StayAwake {
         let prev_es = self.update_execution_state(next_es);
         let prev_es_label = execution_state_as_string(prev_es);
         print!(
-            "Reset thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})\r\n",
-            String::from("From").red(),
-            prev_es_label,
-            prev_es.0,
-            String::from("To").blue(),
-            next_es_label,
-            next_es.0
+            "Reset thread execution state:\r\n    \
+            \0x1b[0;31mFrom\0x1b[0;39;49m ==> {} ({:#X})\r\n      \
+            \0x1b[0;34mTo\0x1b[0;39;49m ==> {} ({:#X})\r\n",
+            prev_es_label, prev_es.0, next_es_label, next_es.0
         );
     }
 }
@@ -111,8 +107,8 @@ impl WslRunner<'_> {
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(self.listen_address).await?;
         print!(
-            "Opened listener on {}\r\n",
-            String::from(self.listen_address).bold()
+            "Opened listener on \0x1b[1m{}033[0m\r\n",
+            self.listen_address
         );
 
         let mut command = WslRunner::launch_command(self.launch_command)?;
@@ -126,8 +122,8 @@ impl WslRunner<'_> {
                 }
                 val = command.wait() => {
                     match val {
-                        Ok(exit_status) => print!("Command exited: {}\r\n", exit_status.to_string().green()),
-                        Err(err) => print!("Command failed with {} error\r\n",err.to_string().green()),
+                        Ok(exit_status) => print!("Command exited: \0x1b[1m{}\0x1b[0m\r\n", exit_status),
+                        Err(err) => print!("Command failed with \0x1b[1m{}\0x1b[0m error\r\n",err),
                     }
                     // TODO: improve error handling here.
                     command = WslRunner::launch_command(self.launch_command)?;
@@ -137,7 +133,7 @@ impl WslRunner<'_> {
                 }
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
-                        print!("Received connection from {}\r\n", addr.to_string().bold());
+                        print!("Received connection from \0x1b[1m{}\0x1b[0m\r\n", addr);
                         let target_address = self.target_address.to_string();
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
@@ -164,7 +160,7 @@ impl WslRunner<'_> {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
         while let Some(line) = lines.next_line().await? {
-            print!("Command output: {}\r\n", line.yellow())
+            print!("Command output: \0x1b[0;35m{}\0x1b[0;39m\r\n", line)
         }
         Ok(())
     }
@@ -189,18 +185,16 @@ impl WslRunner<'_> {
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
                 print!(
-                    "Connection with {} ended gracefully ({} bytes from client, {} bytes from server)\r\n",
-                    addr,
-                    to_egress.to_string().purple(),
-                    to_ingress.to_string().blue(),
+                    "Connection with \0x1b[1m{}\0x1b[0m ended gracefully\
+                    ({} sent, {} bytes received)\r\n",
+                    addr, to_ingress, to_egress
                 );
                 Ok(())
             }
             Err(err) => {
                 print!(
-                    "Error while proxying (addr {}): {}\r\n",
-                    addr,
-                    err.to_string().red()
+                    "Error while proxying from \0x1b[1m{}\0x1b[0m: \0x1b[0;31m{}\0x1b[0;39m\r\n",
+                    addr, err
                 );
                 Err(err)
             }
@@ -219,14 +213,11 @@ impl WslRunner<'_> {
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // requested execution state
     let req_es = if args.display {
-        print!("Running in {} mode ==> the machine will not go to sleep and the display will remain on\r\n", String::from("Display").green());
+        print!("Running in \0x1b[1mDisplay\0x1b[0m mode ==> the machine will not go to sleep and the display will remain on\r\n");
 
         ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
     } else {
-        print!(
-            "Running in {} mode ==> the machine will not go to sleep\r\n",
-            String::from("System").green()
-        );
+        print!("Running in \0x1b[1mSystem\0x1b[0m mode ==> the machine will not go to sleep\r\n",);
 
         ES_SYSTEM_REQUIRED
     };
@@ -244,13 +235,10 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
     // print
     print!(
-        "Set thread execution state:\r\n    {} ==> {} ({:#X})\r\n      {} ==> {} ({:#X})\r\n",
-        String::from("From").purple(),
-        prev_es_label,
-        prev_es.0,
-        String::from("To").cyan(),
-        next_es_label,
-        next_es.0
+        "Set thread execution state:\r\n    \
+            \0x1b[0;31mFrom\0x1b[0;39;49m ==> {} ({:#X})\r\n      \
+            \0x1b[0;34mTo\0x1b[0;39;49m ==> {} ({:#X})\r\n",
+        prev_es_label, prev_es.0, next_es_label, next_es.0
     );
 
     // After exiting main, StayAwake instance is dropped and the thread execution
