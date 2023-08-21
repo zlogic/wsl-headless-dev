@@ -70,8 +70,8 @@ impl Drop for StayAwake {
         let prev_es_label = execution_state_as_string(prev_es);
         print!(
             "Reset thread execution state:\r\n    \
-            \0x1b[0;31mFrom\0x1b[0;39;49m ==> {} ({:#X})\r\n      \
-            \0x1b[0;34mTo\0x1b[0;39;49m ==> {} ({:#X})\r\n",
+            \x1b[0;31mFrom\x1b[0;39;49m ==> {} ({:#X})\r\n      \
+            \x1b[0;34mTo\x1b[0;39;49m ==> {} ({:#X})\r\n",
             prev_es_label, prev_es.0, next_es_label, next_es.0
         );
     }
@@ -116,7 +116,7 @@ impl WslRunner<'_> {
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(self.listen_address).await?;
         print!(
-            "Opened listener on \0x1b[1m{}033[0m\r\n",
+            "Opened listener on \x1b[1m{}\x1b[0m\r\n",
             self.listen_address
         );
 
@@ -131,8 +131,8 @@ impl WslRunner<'_> {
                 }
                 val = command.wait() => {
                     match val {
-                        Ok(exit_status) => print!("Command exited: \0x1b[1m{}\0x1b[0m\r\n", exit_status),
-                        Err(err) => print!("Command failed with \0x1b[1m{}\0x1b[0m error\r\n",err),
+                        Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
+                        Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n",err),
                     }
                     // TODO: improve error handling here.
                     command = WslRunner::launch_command(self.launch_command)?;
@@ -142,7 +142,7 @@ impl WslRunner<'_> {
                 }
                 val = listener.accept() =>{
                     if let Ok((ingress, addr)) = val {
-                        print!("Received connection from \0x1b[1m{}\0x1b[0m\r\n", addr);
+                        print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
                         let target_address = self.target_address.to_string();
                         tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
                     }
@@ -169,7 +169,7 @@ impl WslRunner<'_> {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
         while let Some(line) = lines.next_line().await? {
-            print!("Command output: \0x1b[0;35m{}\0x1b[0;39m\r\n", line)
+            print!("Command output: \x1b[0;35m{}\x1b[0;39m\r\n", line)
         }
         Ok(())
     }
@@ -194,7 +194,7 @@ impl WslRunner<'_> {
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
                 print!(
-                    "Connection with \0x1b[1m{}\0x1b[0m ended gracefully\
+                    "Connection with \x1b[1m{}\x1b[0m ended gracefully\
                     ({} sent, {} bytes received)\r\n",
                     addr, to_ingress, to_egress
                 );
@@ -202,7 +202,7 @@ impl WslRunner<'_> {
             }
             Err(err) => {
                 print!(
-                    "Error while proxying from \0x1b[1m{}\0x1b[0m: \0x1b[0;31m{}\0x1b[0;39m\r\n",
+                    "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}\x1b[0;39m\r\n",
                     addr, err
                 );
                 Err(err)
@@ -252,11 +252,11 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
 
     // requested execution state
     let req_es = if args.display {
-        print!("Running in \0x1b[1mDisplay\0x1b[0m mode ==> the machine will not go to sleep and the display will remain on\r\n");
+        print!("Running in \x1b[1mDisplay\x1b[0m mode ==> the machine will not go to sleep and the display will remain on\r\n");
 
         ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
     } else {
-        print!("Running in \0x1b[1mSystem\0x1b[0m mode ==> the machine will not go to sleep\r\n",);
+        print!("Running in \x1b[1mSystem\x1b[0m mode ==> the machine will not go to sleep\r\n",);
 
         ES_SYSTEM_REQUIRED
     };
@@ -275,8 +275,8 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     // print
     print!(
         "Set thread execution state:\r\n    \
-            \0x1b[0;31mFrom\0x1b[0;39;49m ==> {} ({:#X})\r\n      \
-            \0x1b[0;34mTo\0x1b[0;39;49m ==> {} ({:#X})\r\n",
+            \x1b[0;31mFrom\x1b[0;39;49m ==> {} ({:#X})\r\n      \
+            \x1b[0;34mTo\x1b[0;39;49m ==> {} ({:#X})\r\n",
         prev_es_label, prev_es.0, next_es_label, next_es.0
     );
 
