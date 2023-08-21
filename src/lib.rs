@@ -1,3 +1,4 @@
+use core::fmt;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
@@ -17,6 +18,14 @@ use windows::Win32::System::Power::{
     ES_SYSTEM_REQUIRED,
     // ES_USER_PRESENT,
     EXECUTION_STATE,
+};
+
+use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, TRUE};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+};
+use windows::Win32::System::Console::{
+    GetConsoleMode, SetConsoleMode, CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
 };
 
 const LAUNCH_COMMAND: &'static str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
@@ -209,8 +218,38 @@ impl WslRunner<'_> {
     }
 }
 
-// Run
+fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
+    // Most of the Windows APIs are unsafe.
+    unsafe {
+        let console_handle = CreateFileW(
+            windows::w!("CONOUT$"),
+            (GENERIC_READ | GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )?;
+        if console_handle == INVALID_HANDLE_VALUE {
+            return Err(ConsoleError::new("Cannot access console window").into());
+        }
+        let mut console_mode = CONSOLE_MODE(0);
+        if GetConsoleMode(console_handle, &mut console_mode) != TRUE {
+            return Err(ConsoleError::new("Cannot get console mode").into());
+        };
+        console_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        if SetConsoleMode(console_handle, console_mode) != TRUE {
+            Err(ConsoleError::new("Failed to set VT100 console mode").into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    // Set terminal mode.
+    enable_vt100_mode()?;
+
     // requested execution state
     let req_es = if args.display {
         print!("Running in \0x1b[1mDisplay\0x1b[0m mode ==> the machine will not go to sleep and the display will remain on\r\n");
@@ -249,4 +288,23 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     WslRunner::new(launch_command, shutdown_command)
         .run()
         .map_err(|e| e.into())
+}
+
+#[derive(Debug)]
+pub struct ConsoleError {
+    msg: &'static str,
+}
+
+impl ConsoleError {
+    fn new(msg: &'static str) -> ConsoleError {
+        ConsoleError { msg }
+    }
+}
+
+impl std::error::Error for ConsoleError {}
+
+impl fmt::Display for ConsoleError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.msg)
+    }
 }
