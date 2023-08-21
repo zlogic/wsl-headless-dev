@@ -18,6 +18,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
+    - name: Get current Rust version
+      id: get-rust-version
+      run: |
+        $version = rustc --version | % {$_.replace(" ","_")}
+        echo "VERSION=$version" >> "$env:GITHUB_OUTPUT"
+
     - name: Cache Rust dependencies and artifacts
       id: cache-rust
       uses: actions/cache@v3
@@ -27,7 +33,7 @@ jobs:
           ~\.cargo\registry\cache
           ~\.cargo\git\db
           ${{ github.workspace }}\target
-        key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+        key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ steps.get-rust-version.outputs.VERSION }}-${{ hashFiles('Cargo.lock') }}
 
     - name: Install compiler and prepare for cross-compilation
       if: matrix.arch == 'aarch64'
