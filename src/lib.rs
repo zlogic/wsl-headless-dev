@@ -1,4 +1,5 @@
 use core::fmt;
+use std::env;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
@@ -9,7 +10,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::signal;
 
-use clap::Parser;
 use windows::Win32::System::Power::{
     SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
 };
@@ -26,20 +26,34 @@ const LAUNCH_COMMAND: &'static str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_conf
 const SHUTDOWN_COMMAND: &'static str = "kill $(cat ~/.ssh/sshd.pid); rm ~/.ssh/sshd.pid";
 const PREVENT_SLEEP_TIMER: Duration = Duration::from_secs(60);
 
-// CLI
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-/// Run an SSH port redirector and keep Windows awake
 pub struct Args {
-    /// Keep display on
-    #[clap(long)]
-    pub display: bool,
-    /// Start command
-    #[clap(default_value = LAUNCH_COMMAND)]
     pub launch_command: String,
-    /// Shutdown command
-    #[clap(default_value = SHUTDOWN_COMMAND)]
     pub shutdown_command: String,
+}
+
+impl Args {
+    pub fn parse() -> Args {
+        let mut launch_command: Option<String> = None;
+        let mut shutdown_command: Option<String> = None;
+
+        for arg in env::args() {
+            let (name, value) = if let Some(arg) = arg.split_once("=") {
+                arg
+            } else {
+                continue;
+            };
+            if name == "--launch-command" {
+                launch_command = Some(value.to_string());
+            } else if name == "--shutdown-command" {
+                shutdown_command = Some(value.to_string());
+            }
+        }
+
+        Args {
+            launch_command: launch_command.unwrap_or(LAUNCH_COMMAND.to_string()),
+            shutdown_command: shutdown_command.unwrap_or(SHUTDOWN_COMMAND.to_string()),
+        }
+    }
 }
 
 struct WslRunner<'a> {
@@ -209,8 +223,8 @@ fn prevent_sleep() {
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     enable_vt100_mode()?;
 
-    let launch_command = &args.launch_command.as_str();
-    let shutdown_command = &args.shutdown_command.as_str();
+    let launch_command = &args.launch_command;
+    let shutdown_command = &args.shutdown_command;
     WslRunner::new(launch_command, shutdown_command)
         .run()
         .map_err(|e| e.into())

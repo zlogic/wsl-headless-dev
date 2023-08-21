@@ -1,4 +1,3 @@
-use clap::Parser;
 use std::process;
 use wsl_headless_dev::Args;
 
