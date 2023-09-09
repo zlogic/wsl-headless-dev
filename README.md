@@ -37,6 +37,8 @@ sudo cat /etc/ssh/sshd_config > ~/.ssh/sshd/sshd_config
 Then update paths to `HostKey` and the port (to `2022`) in `~/.ssh/sshd/sshd_config`.
 Set PidFile to `~/.ssh/sshd.pid`.
 
+To **temporarily** enable password authentication, set `PasswordAuthentication: yes` and `UsePAM: yes`.
+
 ## How to use it
 
 Connect to your Windows machine using ssh, with the default port (22).
