@@ -22,8 +22,8 @@ use windows::Win32::System::Console::{
     GetConsoleMode, SetConsoleMode, CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
 };
 
-const LAUNCH_COMMAND: &'static str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
-const SHUTDOWN_COMMAND: &'static str = "kill $(cat ~/.ssh/sshd.pid); rm ~/.ssh/sshd.pid";
+const LAUNCH_COMMAND: &str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
+const SHUTDOWN_COMMAND: &str = "kill $(cat ~/.ssh/sshd.pid); rm ~/.ssh/sshd.pid";
 const PREVENT_SLEEP_TIMER: Duration = Duration::from_secs(60);
 
 pub struct Args {
@@ -37,7 +37,7 @@ impl Args {
         let mut shutdown_command: Option<String> = None;
 
         for arg in env::args() {
-            let (name, value) = if let Some(arg) = arg.split_once("=") {
+            let (name, value) = if let Some(arg) = arg.split_once('=') {
                 arg
             } else {
                 continue;
