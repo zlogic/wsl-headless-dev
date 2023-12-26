@@ -14,7 +14,7 @@ use windows::Win32::System::Power::{
     SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
 };
 
-use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, TRUE};
+use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -184,7 +184,7 @@ impl WslRunner<'_> {
 fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
     unsafe {
         let console_handle = CreateFileW(
-            windows::w!("CONOUT$"),
+            windows::core::w!("CONOUT$"),
             (GENERIC_READ | GENERIC_WRITE).0,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
@@ -196,11 +196,11 @@ fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
             return Err(ConsoleError::new("Cannot access console window").into());
         }
         let mut console_mode = CONSOLE_MODE(0);
-        if GetConsoleMode(console_handle, &mut console_mode) != TRUE {
+        if GetConsoleMode(console_handle, &mut console_mode).is_err() {
             return Err(ConsoleError::new("Cannot get console mode").into());
         };
         console_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-        if SetConsoleMode(console_handle, console_mode) != TRUE {
+        if SetConsoleMode(console_handle, console_mode).is_err() {
             Err(ConsoleError::new("Failed to set VT100 console mode").into())
         } else {
             Ok(())
