@@ -16,7 +16,7 @@ jobs:
         arch: [aarch64, x86_64]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Get current Rust version
       id: get-rust-version
@@ -26,14 +26,14 @@ jobs:
 
     - name: Cache Rust dependencies and artifacts
       id: cache-rust
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~\.cargo\registry\index
           ~\.cargo\registry\cache
           ~\.cargo\git\db
           ${{ github.workspace }}\target
-        key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ steps.get-rust-version.outputs.VERSION }}-${{ hashFiles('Cargo.lock') }}
+        key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ steps.get-rust-version.outputs.VERSION }}-${{ hashFiles('Cargo.*') }}
 
     - name: Install compiler and prepare for cross-compilation
       if: matrix.arch == 'aarch64'
@@ -48,7 +48,7 @@ jobs:
       run: Compress-Archive -Path .\target\${{ matrix.arch }}-pc-windows-msvc\release\wsl-headless-dev.exe -DestinationPath wsl-headless-dev-${{ runner.os }}-${{ matrix.arch }}.zip
 
     - name: Upload application
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: wsl-headless-dev-${{ runner.os }}-${{ matrix.arch }}
         path: wsl-headless-dev-*.zip
