@@ -8,8 +8,8 @@ license = "Apache-2.0"
 rust-version = "1.77"
 
 [dependencies]
-windows = { version = "0.54", default_features = false, features = ["Win32_System_Power", "Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security"] }
-tokio = { version = "1.36", default-features = false, features = ["macros", "rt-multi-thread", "io-util", "signal", "net", "process", "time"] }
+windows = { version = "*", default_features = false, features = ["Win32_System_Power", "Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security"] }
+tokio = { version = "1.37", default-features = false, features = ["macros", "rt-multi-thread", "io-util", "signal", "net", "process", "time"] }
 
 [profile.release]
 strip = true
