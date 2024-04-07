@@ -25,7 +25,7 @@ Install and configure WSL.
 Generate SSH host keys:
 
 ```shell
-sudo apt install openssh-server
+sudo dnf --setopt=install_weak_deps-False install openssh-server
 mkdir -p ~/.ssh/sshd
 ssh-keygen -q -N "" -t dsa -f ~/.ssh/sshd/ssh_host_dsa_key
 ssh-keygen -q -N "" -t rsa -b 4096 -f ~/.ssh/sshd/ssh_host_rsa_key
