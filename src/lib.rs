@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fmt};
 
@@ -76,14 +77,14 @@ impl WslRunner<'_> {
     }
 
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
-        let ex = Executor::new();
+        let ex = Arc::new(Executor::new());
         print!(
             "Opened listener on \x1b[1m{}\x1b[0m\r\n",
             self.listen_address
         );
 
-        let command_task = ex.spawn(async {
-            let ex = Executor::new();
+        let command_ex = ex.clone();
+        let command_task = ex.spawn(async move {
             loop {
                 let mut command = match WslRunner::launch_command(self.launch_command) {
                     Ok(command) => command,
@@ -92,8 +93,10 @@ impl WslRunner<'_> {
                         break;
                     }
                 };
-                let redirect_stdin = ex.spawn(WslRunner::redirect_stream(command.stdout.take()));
-                let redirect_stderr = ex.spawn(WslRunner::redirect_stream(command.stderr.take()));
+                let redirect_stdin =
+                    command_ex.spawn(WslRunner::redirect_stream(command.stdout.take()));
+                let redirect_stderr =
+                    command_ex.spawn(WslRunner::redirect_stream(command.stderr.take()));
                 match command.status().await {
                     Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
                     Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
@@ -111,14 +114,14 @@ impl WslRunner<'_> {
         });
 
         let listener = TcpListener::bind(self.listen_address).await?;
+        let client_ex = ex.clone();
         let listen_socket_task = ex.spawn(async move {
-            let ex = Executor::new();
             loop {
                 if let Ok((ingress, addr)) = listener.accept().await {
                     print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
                     let target_address = self.target_address.to_string();
                     let egress = TcpStream::connect(target_address).await.unwrap();
-                    WslRunner::handle_socket(&ex, ingress, egress, addr);
+                    WslRunner::handle_socket(&client_ex, ingress, egress, addr);
                 }
             }
         });
