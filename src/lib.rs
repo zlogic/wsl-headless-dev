@@ -93,7 +93,7 @@ impl WslRunner<'_> {
                         break;
                     }
                 };
-                let redirect_stdin =
+                let redirect_stdout =
                     command_ex.spawn(WslRunner::redirect_stream(command.stdout.take()));
                 let redirect_stderr =
                     command_ex.spawn(WslRunner::redirect_stream(command.stderr.take()));
@@ -101,7 +101,7 @@ impl WslRunner<'_> {
                     Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
                     Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
                 }
-                let _ = redirect_stdin.cancel().await;
+                let _ = redirect_stdout.cancel().await;
                 let _ = redirect_stderr.cancel().await;
             }
         });
@@ -146,13 +146,11 @@ impl WslRunner<'_> {
         Ok(())
     }
 
-    async fn redirect_stream<R: AsyncRead + Unpin>(
-        stream: Option<R>,
-    ) -> Result<(), std::io::Error> {
+    async fn redirect_stream<R: AsyncRead + Unpin>(stream: Option<R>) {
         let stream = if let Some(stream) = stream {
             stream
         } else {
-            return Ok(());
+            return;
         };
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
@@ -162,7 +160,6 @@ impl WslRunner<'_> {
                 Err(err) => print!("Failed to read output: \x1b[1m{}\x1b[0m\r\n", err),
             }
         }
-        Ok(())
     }
 
     fn launch_command(cmd: &str) -> Result<Child, std::io::Error> {
