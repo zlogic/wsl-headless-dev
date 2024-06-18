@@ -1,14 +1,16 @@
-use core::fmt;
-use std::env;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
 use std::time::Duration;
+use std::{env, fmt};
 
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::process::{Child, Command};
-use tokio::signal;
+use async_executor::Executor;
+use async_io::Timer;
+use async_net::{TcpListener, TcpStream};
+use async_process::{Child, Command};
+use futures_lite::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use futures_lite::stream::StreamExt;
+use futures_lite::{future, io};
 
 use windows::Win32::System::Power::{
     SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
@@ -74,51 +76,71 @@ impl WslRunner<'_> {
     }
 
     async fn wait_termination(&self) -> Result<(), std::io::Error> {
-        let listener = TcpListener::bind(self.listen_address).await?;
+        let ex = Executor::new();
         print!(
             "Opened listener on \x1b[1m{}\x1b[0m\r\n",
             self.listen_address
         );
 
-        let mut command = WslRunner::launch_command(self.launch_command)?;
-        let mut stdin = command.stdin.take();
-        tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
-        tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
-        let mut interval = tokio::time::interval(PREVENT_SLEEP_TIMER);
-        loop {
-            tokio::select! {
-                _ = signal::ctrl_c() => {
-                    break;
-                }
-                val = command.wait() => {
-                    match val {
-                        Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
-                        Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n",err),
+        let command_task = ex.spawn(async {
+            let ex = Executor::new();
+            loop {
+                let mut command = match WslRunner::launch_command(self.launch_command) {
+                    Ok(command) => command,
+                    Err(err) => {
+                        print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err);
+                        break;
                     }
-                    // TODO: improve error handling here.
-                    command = WslRunner::launch_command(self.launch_command)?;
-                    stdin = command.stdin.take();
-                    tokio::spawn(WslRunner::redirect_stream(command.stdout.take()));
-                    tokio::spawn(WslRunner::redirect_stream(command.stderr.take()));
+                };
+                let redirect_stdin = ex.spawn(WslRunner::redirect_stream(command.stdout.take()));
+                let redirect_stderr = ex.spawn(WslRunner::redirect_stream(command.stderr.take()));
+                match command.status().await {
+                    Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
+                    Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
                 }
-                val = listener.accept() =>{
-                    if let Ok((ingress, addr)) = val {
-                        print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
-                        let target_address = self.target_address.to_string();
-                        tokio::spawn(WslRunner::handle_socket(ingress, addr, target_address));
-                    }
-                }
-                _ = interval.tick() =>{
-                    prevent_sleep()
+                let _ = redirect_stdin.await;
+                let _ = redirect_stderr.await;
+            }
+        });
+        let prevent_sleep_task = ex.spawn(async {
+            let mut interval = Timer::interval(PREVENT_SLEEP_TIMER);
+            loop {
+                prevent_sleep();
+                interval.next().await;
+            }
+        });
+
+        let listener = TcpListener::bind(self.listen_address).await?;
+        let listen_socket_task = ex.spawn(async move {
+            let ex = Executor::new();
+            loop {
+                if let Ok((ingress, addr)) = listener.accept().await {
+                    print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
+                    let target_address = self.target_address.to_string();
+                    let egress = TcpStream::connect(target_address).await.unwrap();
+                    WslRunner::handle_socket(&ex, ingress, egress, addr);
                 }
             }
+        });
+
+        {
+            let (s, ctrl_c) = async_channel::bounded(100);
+            let handle = move || {
+                s.try_send(()).ok();
+            };
+            ctrlc::set_handler(handle).unwrap();
+            ex.run(async {
+                let _ = ctrl_c.recv().await;
+            })
+            .await;
         }
-        drop(stdin);
 
         let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
-        shutdown_command.wait().await?;
+        shutdown_command.status().await?;
 
-        command.wait().await?;
+        command_task.cancel().await;
+        prevent_sleep_task.cancel().await;
+        listen_socket_task.cancel().await;
         Ok(())
     }
 
@@ -132,8 +154,11 @@ impl WslRunner<'_> {
         };
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
-        while let Some(line) = lines.next_line().await? {
-            print!("Command output: \x1b[0;35m{}\x1b[0;39m\r\n", line)
+        while let Some(line) = lines.next().await {
+            match line {
+                Ok(line) => print!("Command output: \x1b[0;35m{}\x1b[0;39m\r\n", line),
+                Err(err) => print!("Failed to read output: \x1b[1m{}\x1b[0m\r\n", err),
+            }
         }
         Ok(())
     }
@@ -149,35 +174,43 @@ impl WslRunner<'_> {
             .spawn()
     }
 
-    async fn handle_socket(
-        mut ingress: TcpStream,
+    fn handle_socket(
+        ex: &async_executor::Executor,
+        ingress: TcpStream,
+        egress: TcpStream,
         addr: SocketAddr,
-        target_address: String,
-    ) -> Result<(), std::io::Error> {
-        let mut egress = TcpStream::connect(target_address).await.unwrap();
-        match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
-            Ok((to_egress, to_ingress)) => {
-                print!(
-                    "Connection with \x1b[1m{}\x1b[0m ended gracefully ({} sent, {} bytes received)\r\n",
-                    addr, to_ingress, to_egress
-                );
-                Ok(())
-            }
-            Err(err) => {
-                print!(
-                    "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}\x1b[0;39m\r\n",
-                    addr, err
-                );
-                Err(err)
-            }
-        }
+    ) {
+        ex.spawn(async move {
+            let (mut ingress_read, mut ingress_write) = io::split(ingress);
+            let (mut egress_read, mut egress_write) = io::split(egress);
+            let i_to_e = io::copy(&mut ingress_read, &mut egress_write);
+            let e_to_i = io::copy(&mut egress_read, &mut ingress_write);
+            match future::zip(i_to_e, e_to_i).await {
+                (Ok(to_egress), Ok(to_ingress)) => {
+                    print!(
+                        "Connection with \x1b[1m{}\x1b[0m ended gracefully ({} sent, {} bytes received)\r\n",
+                        addr, to_ingress, to_egress
+                    );
+                }
+                (Ok(_), Err(err)) | (Err(err), Ok(_)) => {
+                    print!(
+                        "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}\x1b[0;39m\r\n",
+                        addr, err
+                    );
+                }
+                (Err(err1), Err(err2)) => {
+                    print!(
+                        "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}; {}\x1b[0;39m\r\n",
+                        addr, err1, err2
+                    );
+                }
+            };
+        })
+        .detach();
     }
 
     fn run(&self) -> Result<(), std::io::Error> {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(self.wait_termination())?;
-        rt.shutdown_timeout(Duration::from_secs(60));
-        Ok(())
+        async_io::block_on(self.wait_termination())
     }
 }
 
