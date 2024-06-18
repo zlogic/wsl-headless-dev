@@ -76,7 +76,7 @@ impl WslRunner<'_> {
         }
     }
 
-    async fn wait_termination(&self) -> Result<(), std::io::Error> {
+    fn run(&self) -> Result<(), std::io::Error> {
         let ex = Arc::new(Executor::new());
         print!(
             "Opened listener on \x1b[1m{}\x1b[0m\r\n",
@@ -113,7 +113,7 @@ impl WslRunner<'_> {
             }
         });
 
-        let listener = TcpListener::bind(self.listen_address).await?;
+        let listener = future::block_on(async { TcpListener::bind(self.listen_address).await })?;
         let client_ex = ex.clone();
         let listen_socket_task = ex.spawn(async move {
             loop {
@@ -126,24 +126,22 @@ impl WslRunner<'_> {
             }
         });
 
-        {
-            let (s, ctrl_c) = async_channel::bounded(100);
-            let handle = move || {
-                s.try_send(()).ok();
-            };
-            ctrlc::set_handler(handle).unwrap();
-            future::block_on(ex.run(async {
-                let _ = ctrl_c.recv().await;
-            }));
-        }
+        let (s, ctrl_c) = async_channel::bounded(100);
+        let handle = move || {
+            s.try_send(()).ok();
+        };
+        ctrlc::set_handler(handle).unwrap();
+        future::block_on(ex.run(async {
+            let _ = ctrl_c.recv().await;
 
-        let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
-        shutdown_command.status().await?;
+            let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
+            shutdown_command.status().await?;
 
-        command_task.cancel().await;
-        prevent_sleep_task.cancel().await;
-        listen_socket_task.cancel().await;
-        Ok(())
+            command_task.cancel().await;
+            prevent_sleep_task.cancel().await;
+            listen_socket_task.cancel().await;
+            Ok(())
+        }))
     }
 
     async fn redirect_stream<R: AsyncRead + Unpin>(stream: Option<R>) {
@@ -206,10 +204,6 @@ impl WslRunner<'_> {
             };
         })
         .detach();
-    }
-
-    fn run(&self) -> Result<(), std::io::Error> {
-        async_io::block_on(self.wait_termination())
     }
 }
 
