@@ -132,10 +132,9 @@ impl WslRunner<'_> {
                 s.try_send(()).ok();
             };
             ctrlc::set_handler(handle).unwrap();
-            ex.run(async {
+            future::block_on(ex.run(async {
                 let _ = ctrl_c.recv().await;
-            })
-            .await;
+            }));
         }
 
         let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
