@@ -101,8 +101,8 @@ impl WslRunner<'_> {
                     Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
                     Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
                 }
-                let _ = redirect_stdin.await;
-                let _ = redirect_stderr.await;
+                let _ = redirect_stdin.cancel().await;
+                let _ = redirect_stderr.cancel().await;
             }
         });
         let prevent_sleep_task = ex.spawn(async {
