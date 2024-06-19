@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fmt};
@@ -11,18 +12,19 @@ use async_net::{TcpListener, TcpStream};
 use async_process::{Child, Command};
 use futures_lite::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use futures_lite::stream::StreamExt;
-use futures_lite::{future, io};
+use futures_lite::{future, io, Future};
 
 use windows::Win32::System::Power::{
     SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
 };
 
-use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{BOOL, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, TRUE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Console::{
-    GetConsoleMode, SetConsoleMode, CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    GetConsoleMode, SetConsoleCtrlHandler, SetConsoleMode, CONSOLE_MODE,
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING,
 };
 
 const LAUNCH_COMMAND: &str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
@@ -126,13 +128,8 @@ impl WslRunner<'_> {
             }
         });
 
-        let (s, ctrl_c) = async_channel::bounded(100);
-        let handle = move || {
-            s.try_send(()).ok();
-        };
-        ctrlc::set_handler(handle).unwrap();
         future::block_on(ex.run(async {
-            let _ = ctrl_c.recv().await;
+            CtrlCListener {}.await;
 
             let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
             shutdown_command.status().await?;
@@ -234,6 +231,15 @@ fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn set_ctrlc_handler() -> Result<(), Box<dyn Error>> {
+    unsafe {
+        if SetConsoleCtrlHandler(Some(console_control_handler), TRUE).is_err() {
+            return Err(ConsoleError::new("Cannot set CTRL+C handler").into());
+        }
+    };
+    Ok(())
+}
+
 fn prevent_sleep() {
     // ES_CONTINUOUS keeps the flag while the thread is running; ES_SYSTEM_REQUIRED prevents system sleep.
     // Add ES_DISPLAY_REQUIRED flag to prevent display from turning off.
@@ -248,6 +254,7 @@ fn prevent_sleep() {
 
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     enable_vt100_mode()?;
+    set_ctrlc_handler()?;
 
     let launch_command = &args.launch_command;
     let shutdown_command = &args.shutdown_command;
@@ -272,5 +279,28 @@ impl std::error::Error for ConsoleError {}
 impl fmt::Display for ConsoleError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.msg)
+    }
+}
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
+
+unsafe extern "system" fn console_control_handler(_ty: u32) -> BOOL {
+    TRUE
+}
+
+struct CtrlCListener {}
+
+impl Future for CtrlCListener {
+    type Output = ();
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if RUNNING.load(Ordering::Relaxed) {
+            std::task::Poll::Pending
+        } else {
+            std::task::Poll::Ready(())
+        }
     }
 }

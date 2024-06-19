@@ -15,7 +15,6 @@ async-process = { version = "2.0", default-features = false }
 async-net = { version = "2.0", default-features = false }
 async-executor = { version = "1.5", default-features = false }
 futures-lite = { version = "2.0", default-features = false }
-ctrlc = { version = "3.4", default-features = false }
 
 [profile.release]
 strip = true
