@@ -164,7 +164,6 @@ impl WslRunner<'_> {
             .arg(cmd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::piped())
             .spawn()
     }
 
