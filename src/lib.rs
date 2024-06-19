@@ -285,6 +285,7 @@ impl fmt::Display for ConsoleError {
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 unsafe extern "system" fn console_control_handler(_ty: u32) -> BOOL {
+    RUNNING.store(false, Ordering::Relaxed);
     TRUE
 }
 
