@@ -131,10 +131,11 @@ impl WslRunner<'_> {
         future::block_on(ex.run(async {
             CtrlCListener {}.await;
 
+            command_task.cancel().await;
+
             let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
             shutdown_command.status().await?;
 
-            command_task.cancel().await;
             prevent_sleep_task.cancel().await;
             listen_socket_task.cancel().await;
             Ok(())
