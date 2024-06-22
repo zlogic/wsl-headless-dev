@@ -1,13 +1,13 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fmt};
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
+use tokio::runtime::Handle;
 use tokio::signal;
 use windows::Win32::System::Power::{
     SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
@@ -73,9 +73,11 @@ impl WslRunner<'_> {
     }
 
     fn run(&self) -> Result<(), std::io::Error> {
-        let rt = Arc::new(tokio::runtime::Runtime::new()?);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()?;
 
-        let command_rt = rt.clone();
         let launch_command = self.launch_command.to_owned();
         let command_task = rt.spawn(async move {
             loop {
@@ -86,16 +88,15 @@ impl WslRunner<'_> {
                         break;
                     }
                 };
-                let redirect_stdout =
-                    command_rt.spawn(WslRunner::redirect_stream(command.stdout.take()));
-                let redirect_stderr =
-                    command_rt.spawn(WslRunner::redirect_stream(command.stderr.take()));
+                let rt = Handle::current();
+                let redirect_stdout = rt.spawn(WslRunner::redirect_stream(command.stdout.take()));
+                let redirect_stderr = rt.spawn(WslRunner::redirect_stream(command.stderr.take()));
                 match command.wait().await {
                     Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
                     Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
                 }
-                let _ = redirect_stdout.abort();
-                let _ = redirect_stderr.abort();
+                redirect_stdout.abort();
+                redirect_stderr.abort();
             }
         });
         let prevent_sleep_task = rt.spawn(async {
@@ -110,7 +111,6 @@ impl WslRunner<'_> {
             .listen_addresses
             .split_whitespace()
             .map(|listen_address| {
-                let client_rt = rt.clone();
                 let target_address = self.target_address.to_string();
                 let listen_address = listen_address.to_owned();
                 rt.spawn(async move {
@@ -131,7 +131,8 @@ impl WslRunner<'_> {
                             print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
                             let target_address = target_address.to_string();
                             let egress = TcpStream::connect(target_address).await.unwrap();
-                            client_rt.spawn(WslRunner::handle_socket(ingress, egress, addr));
+                            let rt = Handle::current();
+                            rt.spawn(WslRunner::handle_socket(ingress, egress, addr));
                         }
                     }
                 })
