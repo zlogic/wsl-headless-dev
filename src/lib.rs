@@ -1,30 +1,24 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fmt};
 
-use async_executor::Executor;
-use async_io::Timer;
-use async_net::{TcpListener, TcpStream};
-use async_process::{Child, Command};
-use futures_lite::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use futures_lite::stream::StreamExt;
-use futures_lite::{future, io, Future};
-
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::process::{Child, Command};
+use tokio::signal;
 use windows::Win32::System::Power::{
     SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
 };
 
-use windows::Win32::Foundation::{BOOL, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, TRUE};
+use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Console::{
-    GetConsoleMode, SetConsoleCtrlHandler, SetConsoleMode, CONSOLE_MODE,
-    ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    GetConsoleMode, SetConsoleMode, CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
 };
 
 const LAUNCH_COMMAND: &str = "/usr/sbin/sshd -D -f ~/.ssh/sshd/sshd_config";
@@ -62,7 +56,7 @@ impl Args {
 }
 
 struct WslRunner<'a> {
-    listen_address: &'a str,
+    listen_addresses: &'a str,
     target_address: &'a str,
     launch_command: &'a str,
     shutdown_command: &'a str,
@@ -71,7 +65,7 @@ struct WslRunner<'a> {
 impl WslRunner<'_> {
     fn new<'a>(launch_command: &'a str, shutdown_command: &'a str) -> WslRunner<'a> {
         WslRunner {
-            listen_address: "0.0.0.0:22",
+            listen_addresses: "0.0.0.0:22 :::22",
             target_address: "localhost:2022",
             launch_command,
             shutdown_command,
@@ -79,16 +73,13 @@ impl WslRunner<'_> {
     }
 
     fn run(&self) -> Result<(), std::io::Error> {
-        let ex = Arc::new(Executor::new());
-        print!(
-            "Opened listener on \x1b[1m{}\x1b[0m\r\n",
-            self.listen_address
-        );
+        let rt = Arc::new(tokio::runtime::Runtime::new()?);
 
-        let command_ex = ex.clone();
-        let command_task = ex.spawn(async move {
+        let command_rt = rt.clone();
+        let launch_command = self.launch_command.to_owned();
+        let command_task = rt.spawn(async move {
             loop {
-                let mut command = match WslRunner::launch_command(self.launch_command) {
+                let mut command = match WslRunner::launch_command(&launch_command) {
                     Ok(command) => command,
                     Err(err) => {
                         print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err);
@@ -96,66 +87,87 @@ impl WslRunner<'_> {
                     }
                 };
                 let redirect_stdout =
-                    command_ex.spawn(WslRunner::redirect_stream(command.stdout.take()));
+                    command_rt.spawn(WslRunner::redirect_stream(command.stdout.take()));
                 let redirect_stderr =
-                    command_ex.spawn(WslRunner::redirect_stream(command.stderr.take()));
-                match command.status().await {
+                    command_rt.spawn(WslRunner::redirect_stream(command.stderr.take()));
+                match command.wait().await {
                     Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
                     Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
                 }
-                let _ = redirect_stdout.cancel().await;
-                let _ = redirect_stderr.cancel().await;
+                let _ = redirect_stdout.abort();
+                let _ = redirect_stderr.abort();
             }
         });
-        let prevent_sleep_task = ex.spawn(async {
-            let mut interval = Timer::interval(PREVENT_SLEEP_TIMER);
+        let prevent_sleep_task = rt.spawn(async {
+            let mut interval = tokio::time::interval(PREVENT_SLEEP_TIMER);
             loop {
                 prevent_sleep();
-                interval.next().await;
+                interval.tick().await;
             }
         });
 
-        let listener = future::block_on(async { TcpListener::bind(self.listen_address).await })?;
-        let client_ex = ex.clone();
-        let listen_socket_task = ex.spawn(async move {
-            loop {
-                if let Ok((ingress, addr)) = listener.accept().await {
-                    print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
-                    let target_address = self.target_address.to_string();
-                    let egress = TcpStream::connect(target_address).await.unwrap();
-                    WslRunner::handle_socket(&client_ex, ingress, egress, addr);
-                }
-            }
-        });
+        let listen_socket_tasks = self
+            .listen_addresses
+            .split_whitespace()
+            .map(|listen_address| {
+                let client_rt = rt.clone();
+                let target_address = self.target_address.to_string();
+                let listen_address = listen_address.to_owned();
+                rt.spawn(async move {
+                    let listener = match TcpListener::bind(&listen_address).await {
+                        Ok(listener) => listener,
+                        Err(err) => {
+                            print!(
+                                "Failed to open listener on {} with \x1b[1m{}\x1b[0m error\r\n",
+                                listen_address, err
+                            );
+                            return;
+                        }
+                    };
 
-        future::block_on(ex.run(async {
-            CtrlCListener {}.await;
+                    print!("Opened listener on \x1b[1m{}\x1b[0m\r\n", listen_address);
+                    loop {
+                        if let Ok((ingress, addr)) = listener.accept().await {
+                            print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
+                            let target_address = target_address.to_string();
+                            let egress = TcpStream::connect(target_address).await.unwrap();
+                            client_rt.spawn(WslRunner::handle_socket(ingress, egress, addr));
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
 
-            command_task.cancel().await;
+        rt.block_on(async {
+            signal::ctrl_c().await?;
+
+            command_task.abort();
 
             let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
-            shutdown_command.status().await?;
+            shutdown_command.wait().await?;
 
-            prevent_sleep_task.cancel().await;
-            listen_socket_task.cancel().await;
+            prevent_sleep_task.abort();
+            listen_socket_tasks
+                .iter()
+                .for_each(|listen_socket_task| listen_socket_task.abort());
             Ok(())
-        }))
+        })
     }
 
-    async fn redirect_stream<R: AsyncRead + Unpin>(stream: Option<R>) {
+    async fn redirect_stream<R: AsyncRead + Unpin>(
+        stream: Option<R>,
+    ) -> Result<(), std::io::Error> {
         let stream = if let Some(stream) = stream {
             stream
         } else {
-            return;
+            return Ok(());
         };
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
-        while let Some(line) = lines.next().await {
-            match line {
-                Ok(line) => print!("Command output: \x1b[0;35m{}\x1b[0;39m\r\n", line),
-                Err(err) => print!("Failed to read output: \x1b[1m{}\x1b[0m\r\n", err),
-            }
+        while let Some(line) = lines.next_line().await? {
+            print!("Command output: \x1b[0;35m{}\x1b[0;39m\r\n", line);
         }
+        Ok(())
     }
 
     fn launch_command(cmd: &str) -> Result<Child, std::io::Error> {
@@ -169,39 +181,27 @@ impl WslRunner<'_> {
             .spawn()
     }
 
-    fn handle_socket(
-        ex: &async_executor::Executor,
-        ingress: TcpStream,
-        egress: TcpStream,
+    async fn handle_socket(
+        mut ingress: TcpStream,
+        mut egress: TcpStream,
         addr: SocketAddr,
-    ) {
-        ex.spawn(async move {
-            let (mut ingress_read, mut ingress_write) = io::split(ingress);
-            let (mut egress_read, mut egress_write) = io::split(egress);
-            let i_to_e = io::copy(&mut ingress_read, &mut egress_write);
-            let e_to_i = io::copy(&mut egress_read, &mut ingress_write);
-            match future::zip(i_to_e, e_to_i).await {
-                (Ok(to_egress), Ok(to_ingress)) => {
-                    print!(
-                        "Connection with \x1b[1m{}\x1b[0m ended gracefully ({} sent, {} bytes received)\r\n",
-                        addr, to_ingress, to_egress
-                    );
-                }
-                (Ok(_), Err(err)) | (Err(err), Ok(_)) => {
-                    print!(
-                        "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}\x1b[0;39m\r\n",
-                        addr, err
-                    );
-                }
-                (Err(err1), Err(err2)) => {
-                    print!(
-                        "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}; {}\x1b[0;39m\r\n",
-                        addr, err1, err2
-                    );
-                }
-            };
-        })
-        .detach();
+    ) -> Result<(), std::io::Error> {
+        match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
+            Ok((to_egress, to_ingress)) => {
+                print!(
+                    "Connection with \x1b[1m{}\x1b[0m ended gracefully ({} sent, {} bytes received)\r\n",
+                    addr, to_ingress, to_egress
+                );
+                Ok(())
+            }
+            Err(err) => {
+                print!(
+                    "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}\x1b[0;39m\r\n",
+                    addr, err
+                );
+                Err(err)
+            }
+        }
     }
 }
 
@@ -232,15 +232,6 @@ fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn set_ctrlc_handler() -> Result<(), Box<dyn Error>> {
-    unsafe {
-        if SetConsoleCtrlHandler(Some(console_control_handler), TRUE).is_err() {
-            return Err(ConsoleError::new("Cannot set CTRL+C handler").into());
-        }
-    };
-    Ok(())
-}
-
 fn prevent_sleep() {
     // ES_CONTINUOUS keeps the flag while the thread is running; ES_SYSTEM_REQUIRED prevents system sleep.
     // Add ES_DISPLAY_REQUIRED flag to prevent display from turning off.
@@ -255,7 +246,6 @@ fn prevent_sleep() {
 
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     enable_vt100_mode()?;
-    set_ctrlc_handler()?;
 
     let launch_command = &args.launch_command;
     let shutdown_command = &args.shutdown_command;
@@ -280,29 +270,5 @@ impl std::error::Error for ConsoleError {}
 impl fmt::Display for ConsoleError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.msg)
-    }
-}
-
-static RUNNING: AtomicBool = AtomicBool::new(true);
-
-unsafe extern "system" fn console_control_handler(_ty: u32) -> BOOL {
-    RUNNING.store(false, Ordering::Relaxed);
-    TRUE
-}
-
-struct CtrlCListener {}
-
-impl Future for CtrlCListener {
-    type Output = ();
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        if RUNNING.load(Ordering::Relaxed) {
-            std::task::Poll::Pending
-        } else {
-            std::task::Poll::Ready(())
-        }
     }
 }
