@@ -72,7 +72,7 @@ impl WslRunner<'_> {
         }
     }
 
-    fn run(&self) -> Result<(), std::io::Error> {
+    fn run(self) -> Result<(), std::io::Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -81,7 +81,7 @@ impl WslRunner<'_> {
         let launch_command = self.launch_command.to_owned();
         let command_task = rt.spawn(async move {
             loop {
-                let mut command = match WslRunner::launch_command(&launch_command) {
+                let mut command = match Self::launch_command(&launch_command) {
                     Ok(command) => command,
                     Err(err) => {
                         print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err);
@@ -144,7 +144,7 @@ impl WslRunner<'_> {
 
             command_task.abort();
 
-            let mut shutdown_command = WslRunner::launch_command(self.shutdown_command)?;
+            let mut shutdown_command = Self::launch_command(self.shutdown_command)?;
             shutdown_command.wait().await?;
 
             prevent_sleep_task.abort();
