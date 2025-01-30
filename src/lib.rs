@@ -206,7 +206,7 @@ impl WslRunner<'_> {
     }
 }
 
-fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
+fn enable_vt100_mode() -> Result<(), RunnerError> {
     unsafe {
         let console_handle = CreateFileW(
             windows::core::w!("CONOUT$"),
@@ -218,15 +218,15 @@ fn enable_vt100_mode() -> Result<(), Box<dyn Error>> {
             None,
         )?;
         if console_handle == INVALID_HANDLE_VALUE {
-            return Err(ConsoleError::new("Cannot access console window").into());
+            return Err("Cannot access console window".into());
         }
         let mut console_mode = CONSOLE_MODE(0);
         if GetConsoleMode(console_handle, &mut console_mode).is_err() {
-            return Err(ConsoleError::new("Cannot get console mode").into());
+            return Err("Cannot get console mode".into());
         };
         console_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
         if SetConsoleMode(console_handle, console_mode).is_err() {
-            Err(ConsoleError::new("Failed to set VT100 console mode").into())
+            Err("Failed to set VT100 console mode".into())
         } else {
             Ok(())
         }
@@ -256,20 +256,46 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 #[derive(Debug)]
-pub struct ConsoleError {
-    msg: &'static str,
+pub enum RunnerError {
+    Internal(&'static str),
+    Io(std::io::Error),
+    Windows(windows::core::Error),
 }
 
-impl ConsoleError {
-    fn new(msg: &'static str) -> ConsoleError {
-        ConsoleError { msg }
+impl std::error::Error for RunnerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match *self {
+            Self::Internal(msg) => None,
+            Self::Io(ref err) => Some(err),
+            Self::Windows(ref err) => None,
+        }
     }
 }
 
-impl std::error::Error for ConsoleError {}
-
-impl fmt::Display for ConsoleError {
+impl fmt::Display for RunnerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.msg)
+        match *self {
+            Self::Internal(msg) => f.write_str(msg),
+            Self::Io(ref err) => err.fmt(f),
+            Self::Windows(ref err) => err.fmt(f),
+        }
+    }
+}
+
+impl From<std::io::Error> for RunnerError {
+    fn from(err: std::io::Error) -> RunnerError {
+        Self::Io(err)
+    }
+}
+
+impl From<windows::core::Error> for RunnerError {
+    fn from(err: windows::core::Error) -> RunnerError {
+        Self::Windows(err)
+    }
+}
+
+impl From<&'static str> for RunnerError {
+    fn from(msg: &'static str) -> RunnerError {
+        Self::Internal(msg)
     }
 }
