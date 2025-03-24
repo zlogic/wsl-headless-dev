@@ -9,7 +9,7 @@ rust-version = "1.85"
 
 [dependencies]
 windows = { version = "*", default-features = false, features = ["Win32_System_Power", "Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security"] }
-tokio = { version = "1.43", default-features = false, features = ["rt", "io-util", "signal", "net", "process", "time"] }
+tokio = { version = "1.44", default-features = false, features = ["rt", "io-util", "signal", "net", "process", "time"] }
 
 [profile.release]
 strip = true
