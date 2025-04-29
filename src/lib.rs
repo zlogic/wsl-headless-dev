@@ -267,9 +267,9 @@ pub enum RunnerError {
 impl std::error::Error for RunnerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
-            Self::Internal(msg) => None,
+            Self::Internal(_) => None,
             Self::Io(ref err) => Some(err),
-            Self::Windows(ref err) => None,
+            Self::Windows(ref err) => Some(err),
         }
     }
 }
