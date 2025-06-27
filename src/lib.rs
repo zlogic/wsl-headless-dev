@@ -84,7 +84,7 @@ impl WslRunner<'_> {
                 let mut command = match Self::launch_command(&launch_command) {
                     Ok(command) => command,
                     Err(err) => {
-                        print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err);
+                        print!("Command failed with \x1b[1m{err}\x1b[0m error\r\n");
                         break;
                     }
                 };
@@ -92,8 +92,8 @@ impl WslRunner<'_> {
                 let redirect_stdout = rt.spawn(WslRunner::redirect_stream(command.stdout.take()));
                 let redirect_stderr = rt.spawn(WslRunner::redirect_stream(command.stderr.take()));
                 match command.wait().await {
-                    Ok(exit_status) => print!("Command exited: \x1b[1m{}\x1b[0m\r\n", exit_status),
-                    Err(err) => print!("Command failed with \x1b[1m{}\x1b[0m error\r\n", err),
+                    Ok(exit_status) => print!("Command exited: \x1b[1m{exit_status}\x1b[0m\r\n"),
+                    Err(err) => print!("Command failed with \x1b[1m{err}\x1b[0m error\r\n"),
                 }
                 redirect_stdout.abort();
                 redirect_stderr.abort();
@@ -118,8 +118,7 @@ impl WslRunner<'_> {
                         Ok(listener) => listener,
                         Err(err) => {
                             print!(
-                                "Failed to open listener on {} with \x1b[1m{}\x1b[0m error\r\n",
-                                listen_address, err
+                                "Failed to open listener on {listen_address} with \x1b[1m{err}\x1b[0m error\r\n"
                             );
                             return;
                         }
@@ -128,7 +127,7 @@ impl WslRunner<'_> {
                     print!("Opened listener on \x1b[1m{}\x1b[0m\r\n", listen_address);
                     loop {
                         if let Ok((ingress, addr)) = listener.accept().await {
-                            print!("Received connection from \x1b[1m{}\x1b[0m\r\n", addr);
+                            print!("Received connection from \x1b[1m{addr}\x1b[0m\r\n");
                             let target_address = target_address.to_string();
                             let egress = TcpStream::connect(target_address).await.unwrap();
                             let rt = Handle::current();
@@ -166,7 +165,7 @@ impl WslRunner<'_> {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
         while let Some(line) = lines.next_line().await? {
-            print!("Command output: \x1b[0;35m{}\x1b[0;39m\r\n", line);
+            print!("Command output: \x1b[0;35m{line}\x1b[0;39m\r\n");
         }
         Ok(())
     }
@@ -190,15 +189,13 @@ impl WslRunner<'_> {
         match tokio::io::copy_bidirectional(&mut ingress, &mut egress).await {
             Ok((to_egress, to_ingress)) => {
                 print!(
-                    "Connection with \x1b[1m{}\x1b[0m ended gracefully ({} sent, {} bytes received)\r\n",
-                    addr, to_ingress, to_egress
+                    "Connection with \x1b[1m{addr}\x1b[0m ended gracefully ({to_ingress} sent, {to_egress} bytes received)\r\n"
                 );
                 Ok(())
             }
             Err(err) => {
                 print!(
-                    "Error while proxying from \x1b[1m{}\x1b[0m: \x1b[0;31m{}\x1b[0;39m\r\n",
-                    addr, err
+                    "Error while proxying from \x1b[1m{addr}\x1b[0m: \x1b[0;31m{err}\x1b[0;39m\r\n"
                 );
                 Err(err)
             }
