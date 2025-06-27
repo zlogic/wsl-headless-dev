@@ -238,7 +238,7 @@ fn prevent_sleep() {
 
     if previous_state != REQUESTED_ES {
         print!(
-            "Preventing system sleep (changed thread execution state from \x1b[0;31m{:#X}\x1b[0;39;49m to \x1b[0;34m{:#X}\x1b[0;39;49m\r\n",
+            "Preventing system sleep (changed thread execution state from \x1b[0;31m{:#X}\x1b[0;39;49m to \x1b[0;34m{:#X}\x1b[0;39;49m)\r\n",
             previous_state.0, REQUESTED_ES.0
         );
     }
