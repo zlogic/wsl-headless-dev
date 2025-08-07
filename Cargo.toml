@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Dmitry Zolotukhin <zlogic@gmail.com>"]
 repository = "https://github.com/zlogic/wsl-headless-dev"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.89"
 
 [dependencies]
 windows = { version = "*", default-features = false, features = ["Win32_System_Power", "Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "std"] }
