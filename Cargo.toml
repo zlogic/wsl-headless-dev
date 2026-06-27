@@ -2,14 +2,14 @@
 name = "wsl-headless-dev"
 version = "0.0.1"
 edition = "2024"
-authors = ["Dmitry Zolotukhin <zlogic@gmail.com>"]
+authors = ["Dmitrii Zolotukhin <contact@3d-net.nl>"]
 repository = "https://github.com/zlogic/wsl-headless-dev"
 license = "Apache-2.0"
 rust-version = "1.89"
 
 [dependencies]
 windows = { version = "*", default-features = false, features = ["Win32_System_Power", "Win32_System_Console", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "std"] }
-tokio = { version = "1.51", default-features = false, features = ["rt", "io-util", "signal", "net", "process", "time"] }
+tokio = { version = "1.52", default-features = false, features = ["rt", "io-util", "signal", "net", "process", "time"] }
 
 [profile.release]
 strip = true
